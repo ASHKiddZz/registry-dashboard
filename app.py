@@ -371,32 +371,42 @@ else:
                 st.write("**Assign a Module to Staff**")
                 with st.form("assign_form", clear_on_submit=True):
                     staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'HOD', 'HOS')", conn)
-                    staff_list = staff_df['user_id'].astype(str) + " - " + staff_df['name']
-                    selected_staff = st.selectbox("Select Staff Member", staff_list)
                     
-                    mod_df = pd.read_sql_query("SELECT module_id, module_name FROM Modules", conn)
-                    mod_list = mod_df['module_id'].astype(str) + " - " + mod_df['module_name']
-                    selected_mod = st.selectbox("Select Module", mod_list)
-                    
-                    # NEW: The input box for the Cohort
-                    assign_cohort = st.text_input("Cohort / Group", value="Group A", help="e.g., Group A, Group B, PT1, etc.")
-                    
-                    submit_assign = st.form_submit_button("Assign Module")
-                    
-                    if submit_assign:
-                        s_id = int(selected_staff.split(" - ")[0])
-                        m_id = selected_mod.split(" - ")[0]
+                    # NEW: Check if the staff list is empty first
+                    if staff_df.empty:
+                        st.warning("⚠️ No teaching staff found. Please register a Lecturer in the Manage Users tab first.")
+                        st.form_submit_button("Assign Module", disabled=True)
+                    else:
+                        staff_list = staff_df['user_id'].astype(str) + " - " + staff_df['name']
+                        selected_staff = st.selectbox("Select Staff Member", staff_list)
                         
-                        cursor = conn.cursor()
-                        # NEW: The safety check now looks for the exact combination of Lecturer + Module + Cohort
-                        cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=?", (s_id, m_id, assign_cohort))
-                        if cursor.fetchone():
-                            st.error(f"This person is already teaching {m_id} for {assign_cohort}!")
+                        mod_df = pd.read_sql_query("SELECT module_id, module_name FROM Modules", conn)
+                        
+                        # NEW: Check if the modules list is empty first
+                        if mod_df.empty:
+                            st.warning("⚠️ No modules found. Please add modules first.")
+                            st.form_submit_button("Assign Module", disabled=True)
                         else:
-                            cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort) VALUES (?, ?, ?)", (s_id, m_id, assign_cohort))
-                            conn.commit()
-                            st.success(f"Assigned {assign_cohort} successfully!")
-                            st.rerun()
+                            mod_list = mod_df['module_id'].astype(str) + " - " + mod_df['module_name']
+                            selected_mod = st.selectbox("Select Module", mod_list)
+                            
+                            assign_cohort = st.text_input("Cohort / Group", value="Group A", help="e.g., Group A, Group B, PT1, etc.")
+                            
+                            submit_assign = st.form_submit_button("Assign Module")
+                            
+                            if submit_assign:
+                                s_id = int(selected_staff.split(" - ")[0])
+                                m_id = selected_mod.split(" - ")[0]
+                                
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=?", (s_id, m_id, assign_cohort))
+                                if cursor.fetchone():
+                                    st.error(f"This person is already teaching {m_id} for {assign_cohort}!")
+                                else:
+                                    cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort) VALUES (?, ?, ?)", (s_id, m_id, assign_cohort))
+                                    conn.commit()
+                                    st.success(f"Assigned {assign_cohort} successfully!")
+                                    st.rerun()
 
             # --- Right Side: Remove ---
             with col2:
