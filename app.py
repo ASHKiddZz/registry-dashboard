@@ -170,6 +170,58 @@ else:
                         st.error("Please fill out the Name and Password fields.")
             conn.close()
 
+        st.divider() # Creates a nice visual line break
+        st.subheader("📥 Bulk Import Staff (Annex Upload)")
+
+        # 1. Create the drag-and-drop zone
+        uploaded_file = st.file_uploader("Upload staff list (CSV or Excel)", type=['csv', 'xlsx'])
+
+        if uploaded_file is not None:
+            # 2. Read the file into Pandas
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    import_df = pd.read_csv(uploaded_file)
+                else:
+                    import_df = pd.read_excel(uploaded_file)
+            
+                st.write("Preview of uploaded document:")
+                st.dataframe(import_df.head(3)) # Show the first 3 rows
+
+                # 3. The Import Button
+                if st.button("Process & Import Users"):
+                    cursor = conn.cursor()
+                    added_count = 0
+                    skipped_count = 0
+
+                    for index, row in import_df.iterrows():
+                        # NOTE: You must change 'Name' and 'Role' to match the exact column headers in your annex file!
+                        staff_name = str(row.get('Name', '')).strip()
+                        staff_role = str(row.get('Role', '')).strip()
+                        category = str(row.get('Category_Level', 'N/A')).strip()
+
+                        # Make sure the row isn't blank
+                        if staff_name and staff_name != 'nan':
+
+                            # Check if this person is already in the database
+                            cursor.execute("SELECT * FROM Users WHERE name=?", (staff_name,))
+                            if not cursor.fetchone():
+                                # Create the account with a default password
+                                cursor.execute("INSERT INTO Users (name, role, category_level, password) VALUES (?, ?, ?, ?)",
+                                               (staff_name, staff_role, category, 'welcome123'))
+                                added_count += 1
+                            else:
+                                skipped_count += 1 # Person already exists, skip them!
+
+                    conn.commit()
+
+                    if added_count > 0:
+                        st.success(f"✅ Successfully imported {added_count} new users! (Skipped {skipped_count} duplicates)")
+                    else:
+                        st.warning(f"⚠️ No new users added. All {skipped_count} people were already in the system.")
+
+            except Exception as e:
+                st.error(f"Could not read the file. Error: {e}")
+
         with tab2:
             st.subheader("University Modules Database")
             conn = sqlite3.connect('registry_database.db')
