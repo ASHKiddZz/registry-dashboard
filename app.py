@@ -74,7 +74,7 @@ else:
     
     # --- TABBED REGISTRY OFFICER VIEW ---
     if st.session_state.user_role == "Registry Officer":
-        tab1, tab2, tab3 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
             st.subheader("Current System Users")
@@ -153,7 +153,7 @@ else:
             with st.form("add_user_form", clear_on_submit=True):
                 new_name = st.text_input("Full Name")
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
-                new_level = st.selectbox("Category Limit", ["Cat 1 - HoS", "Cat 4 - Staff enrolled in PhD", "Cat 5 - All other Academic", "N/A"])
+                new_level = st.selectbox("Category Limit", ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"])
                 new_pass = st.text_input("Temporary Password", type="password")
                 
                 submit_user = st.form_submit_button("Create Account")
@@ -496,6 +496,55 @@ else:
                         st.form_submit_button("Remove Allocation", disabled=True)
 
             conn.close()
+
+        # ==========================================
+        #         TAB 4: PROMOTIONS & ROTATIONS
+        # ==========================================
+        with tab4:
+            st.header("⭐ Promotion & Rotation Radar")
+
+            # 1. The Academic Ladder (Promotions)
+            st.markdown("**Eligible for Academic Promotion (3+ Modules Assigned)**")
+
+            conn = sqlite3.connect('registry_database.db')
+
+            # Complex SQL query that joins the Users and Allocations tables to count workloads
+            promotion_query = """
+            SELECT Users.user_id, Users.name, Users.role, Users.category_level, COUNT(Allocations.module_id) as workload_count
+            FROM Users
+            LEFT JOIN Allocations ON Users.user_id = Allocations.user_id
+            WHERE Users.category_level IN ('Category 5 (Other Academic)', 'Category 4 (PhD Staff)')
+            GROUP BY Users.user_id
+            HAVING workload_count >= 3
+            """
+
+            eligible_df = pd.read_sql_query(promotion_query, conn)
+
+            if eligible_df.empty:
+                st.info("No staff members currently meet the workload criteria for promotion review.")
+            else:
+                st.dataframe(eligible_df)
+
+                # The Approval Form
+                with st.form("approve_promotion"):
+                    st.write("Process an Approved Promotion")
+                    promo_list = eligible_df['user_id'].astype(str) + " - " + eligible_df['name']
+                    selected_promo = st.selectbox("Select Staff Member", promo_list)
+
+                    new_promo_role = st.selectbox("Promote to Role", ["Senior Lecturer", "Associate Professor", "Professor"])
+                    new_promo_cat = st.selectbox("Update Category", ["Category 4 (PhD Staff)", "Category 3 (TBD)"])
+
+                    if st.form_submit_button("Approve & Update Database"):
+                        p_id = int(selected_promo.split(" - ")[0])
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE Users SET role=?, category_level=? WHERE user_id=?", (new_promo_role, new_promo_cat, p_id))
+                        conn.commit()
+                        st.success(f"Successfully promoted to {new_promo_role}!")
+                        st.rerun()
+
+            conn.close()
+
+        
 
     # --- LECTURER VIEW ---
     elif st.session_state.user_role == "Lecturer":
