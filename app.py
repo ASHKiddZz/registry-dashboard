@@ -152,7 +152,7 @@ else:
             st.subheader("Register New Staff Member")
             with st.form("add_user_form", clear_on_submit=True):
                 new_name = st.text_input("Full Name")
-                new_role = st.selectbox("Role", ["Lecturer", "HOD", "HOS", "Registry Officer"])
+                new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
                 new_level = st.selectbox("Category Limit", ["Cat 1 - HoS", "Cat 4 - Staff enrolled in PhD", "Cat 5 - All other Academic", "N/A"])
                 new_pass = st.text_input("Temporary Password", type="password")
                 
@@ -363,7 +363,7 @@ else:
                 SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
                 FROM Users u
                 LEFT JOIN Allocations a ON u.user_id = a.user_id
-                WHERE u.role IN ('Lecturer', 'HOD', 'HOS')
+                WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
                 GROUP BY u.user_id, u.name, u.category_level
             """
             workload_df = pd.read_sql_query(workload_query, conn)
@@ -422,7 +422,7 @@ else:
             with col1:
                 st.write("**Assign a Module to Staff**")
                 with st.form("assign_form", clear_on_submit=True):
-                    staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'HOD', 'HOS')", conn)
+                    staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')", conn)
                     
                     # NEW: Check if the staff list is empty first
                     if staff_df.empty:
