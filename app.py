@@ -103,13 +103,13 @@ else:
                     # Remember: This "Name" is what they use to log in (their username)
                     edit_name = st.text_input("Update Name (Username)", value=current_data['name'])
                     
-                    roles = ["Lecturer", "HOD", "HOS", "Registry Officer"]
+                    roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
                     current_role = current_data['role']
                     role_index = roles.index(current_role) if current_role in roles else 0
                     edit_role = st.selectbox("Update Role", roles, index=role_index)
                     
                 with col2:
-                    levels = ["Cat 1 - HoS", "Cat 4 - Staff enrolled in PhD", "Cat 5 - All other Academic", "N/A"]
+                    levels = ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"]
                     current_level = current_data['category_level']
                     level_index = levels.index(current_level) if current_level in levels else 0
                     edit_level = st.selectbox("Update Category", levels, index=level_index)
