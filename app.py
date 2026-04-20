@@ -1,9 +1,19 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import datetime
 
 # 1. Setup the Page
 st.set_page_config(page_title="Registry Workload System", layout="wide")
+
+# Silent DB Upgrade: Adds hire_year if it doesn't exist yet
+patch_conn = sqlite3.connect('registry_database.db')
+try:
+    patch_conn.execute("ALTER TABLE Users ADD COLUMN hire_year INTEGER DEFAULT 2023")
+    patch_conn.commit()
+except sqlite3.OperationalError:
+    pass # The column already exists, do nothing!
+patch_conn.close()
 
 # 2. Database Helper Function
 def verify_login(username, password):
@@ -154,15 +164,21 @@ else:
                 new_name = st.text_input("Full Name")
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
                 new_level = st.selectbox("Category Limit", ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"])
+    
+                # --- NEW: Hire Year Input ---
+                current_yr = datetime.datetime.now().year
+                new_hire_year = st.number_input("Year Hired", min_value=1990, max_value=current_yr, value=current_yr)
+    
                 new_pass = st.text_input("Temporary Password", type="password")
-                
+
                 submit_user = st.form_submit_button("Create Account")
-                
+
                 if submit_user:
                     if new_name and new_pass:
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO Users (name, role, category_level, password) VALUES (?, ?, ?, ?)", 
-                                       (new_name, new_role, new_level, new_pass))
+                        # --- NEW: Updated INSERT command to include hire_year ---
+                        cursor.execute("INSERT INTO Users (name, role, category_level, password, hire_year) VALUES (?, ?, ?, ?, ?)", 
+                                       (new_name, new_role, new_level, new_pass, new_hire_year))
                         conn.commit()
                         st.success(f"Account created for {new_name}!")
                         st.rerun()
@@ -508,12 +524,15 @@ else:
 
             conn = sqlite3.connect('registry_database.db')
 
-            # Complex SQL query that joins the Users and Allocations tables to count workloads
-            promotion_query = """
-            SELECT Users.user_id, Users.name, Users.role, Users.category_level, COUNT(Allocations.module_id) as workload_count
+            current_yr = datetime.datetime.now().year
+        
+            # Complex SQL query that joins tables AND calculates time served
+            promotion_query = f"""
+            SELECT Users.user_id, Users.name, Users.role, Users.category_level, Users.hire_year, COUNT(Allocations.module_id) as workload_count
             FROM Users
             LEFT JOIN Allocations ON Users.user_id = Allocations.user_id
             WHERE Users.category_level IN ('Category 5 (Other Academic)', 'Category 4 (PhD Staff)')
+            AND ({current_yr} - Users.hire_year) >= 3
             GROUP BY Users.user_id
             HAVING workload_count >= 3
             """
