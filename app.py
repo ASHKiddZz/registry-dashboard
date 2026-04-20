@@ -15,6 +15,21 @@ except sqlite3.OperationalError:
     pass # The column already exists, do nothing!
 patch_conn.close()
 
+# Silent DB Upgrade 2: Create the Waiting Room for Promotions
+patch_conn = sqlite3.connect('registry_database.db')
+patch_conn.execute('''
+    CREATE TABLE IF NOT EXISTS Pending_Promotions (
+        ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        proposed_role TEXT,
+        proposed_category TEXT,
+        status TEXT DEFAULT 'Pending HoD',
+        request_date DATE DEFAULT CURRENT_DATE
+    )
+''')
+patch_conn.commit()
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
@@ -83,7 +98,7 @@ else:
     st.title(f"{st.session_state.user_role} Dashboard")
     
     # --- TABBED REGISTRY OFFICER VIEW ---
-    if st.session_state.user_role == "Registry Officer":
+    def registry_dashboard():
         tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
@@ -550,15 +565,22 @@ else:
                     promo_list = eligible_df['user_id'].astype(str) + " - " + eligible_df['name']
                     selected_promo = st.selectbox("Select Staff Member", promo_list)
 
-                    new_promo_role = st.selectbox("Promote to Role", ["Senior Lecturer", "Associate Professor", "Professor"])
-                    new_promo_cat = st.selectbox("Update Category", ["Category 4 (PhD Staff)", "Category 3 (TBD)"])
+                    selected_user_id = int(selected_promo.split(" - ")[0])
+                    selected_staff = selected_promo.split(" - ")[1]
 
-                    if st.form_submit_button("Approve & Update Database"):
-                        p_id = int(selected_promo.split(" - ")[0])
+                    new_role = st.selectbox("Select New Role", ["Senior Lecturer", "Associate Professor", "Professor"])
+                    new_category = st.selectbox("Select New Category", ["L1", "L2", "L3"])
+
+                    if st.form_submit_button("Submit for Approval"):
                         cursor = conn.cursor()
-                        cursor.execute("UPDATE Users SET role=?, category_level=? WHERE user_id=?", (new_promo_role, new_promo_cat, p_id))
+                        # We insert into our new waiting room table instead of updating the user directly
+                        cursor.execute("""
+                            INSERT INTO Pending_Promotions (user_id, proposed_role, proposed_category, status)
+                            VALUES (?, ?, ?, 'Pending HoD')
+                        """, (selected_user_id, new_role, new_category))
+            
                         conn.commit()
-                        st.success(f"Successfully promoted to {new_promo_role}!")
+                        st.success(f"Promotion request for {selected_staff} sent to HoD for approval!")
                         st.rerun()
 
             conn.close()
@@ -566,7 +588,7 @@ else:
         
 
     # --- LECTURER VIEW ---
-    elif st.session_state.user_role == "Lecturer":
+    def lecturer_dashboard():
         st.info("Personal Workload Summary")
         conn = sqlite3.connect('registry_database.db')
         my_data = pd.read_sql_query("""
@@ -582,3 +604,41 @@ else:
             st.dataframe(my_data, use_container_width=True, hide_index=True)
         else:
             st.warning("No modules assigned to your account yet.")
+        
+    # ---Head of department view---
+    def hod_dashboard():
+        st.title("📋 HoD Approval Portal")
+        st.write("Reviewing promotion recommendations from the Registry Office.")
+
+        conn = sqlite3.connect('registry_database.db')
+    
+        # We join with Users to get the names, but only for tickets waiting for the HoD
+        query = """
+        SELECT p.ticket_id, u.name, p.proposed_role, p.proposed_category, p.status 
+        FROM Pending_Promotions p
+        JOIN Users u ON p.user_id = u.user_id
+        WHERE p.status = 'Pending HoD'
+        """
+        df_pending = pd.read_sql(query, conn)
+
+        if df_pending.empty:
+            st.info("No pending requests to review. Grab a coffee! ☕")
+        else:
+            st.dataframe(df_pending)
+        
+            with st.form("hod_approval_form"):
+                ticket_id = st.selectbox("Select Ticket ID to Approve", df_pending['ticket_id'])
+            
+                if st.form_submit_button("Approve & Send to HoS"):
+                    cursor = conn.cursor()
+                    # Push the ticket to the next level (HoS)
+                    cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoS' WHERE ticket_id = ?", (ticket_id,))
+                    conn.commit()
+                    st.success(f"Ticket #{ticket_id} moved to the Head of School!")
+                    st.rerun()
+    
+        conn.close()
+
+    # ---Head of School view---
+    def hos_dashboard():
+        st.info("🏛️ Welcome to the HoS Portal. Final executive sign-offs will appear here.")
