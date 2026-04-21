@@ -569,7 +569,7 @@ else:
                     selected_staff = selected_promo.split(" - ")[1]
 
                     new_role = st.selectbox("Select New Role", ["Senior Lecturer", "Associate Professor", "Professor"])
-                    new_category = st.selectbox("Select New Category", ["L1", "L2", "L3"])
+                    new_category = st.selectbox("Select New Category", ["Category 1 (Management)", "Category 2 (Professional)", "Category 3 (Technical)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)"])
 
                     if st.form_submit_button("Submit for Approval"):
                         cursor = conn.cursor()
