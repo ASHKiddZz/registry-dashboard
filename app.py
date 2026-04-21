@@ -642,3 +642,30 @@ else:
     # ---Head of School view---
     def hos_dashboard():
         st.info("🏛️ Welcome to the HoS Portal. Final executive sign-offs will appear here.")
+
+# ==========================================
+#      THE TRAFFIC COP (ROLE-BASED ROUTING)
+# ==========================================
+
+# 1. Diagnostic Line (Helps us see if there's a typo in the role name)
+if 'user_role' in st.session_state:
+    st.sidebar.write(f"Logged in as: **{st.session_state.user_role}**")
+
+    # 2. The Routing Logic
+    if st.session_state.user_role == "Registry Officer":
+        registry_dashboard()
+        
+    elif st.session_state.user_role == "HoD":
+        hod_dashboard()
+        
+    elif st.session_state.user_role == "HoS":
+        hos_dashboard()
+        
+    elif st.session_state.user_role in ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor"]:
+        lecturer_dashboard()
+        
+    else:
+        st.error("Access Denied: Your role is not recognized by the system.")
+else:
+    st.warning("Please log in to access the dashboard.")
+
