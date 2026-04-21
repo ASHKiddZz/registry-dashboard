@@ -2,6 +2,30 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import datetime
+import os
+
+# --- DATABASE SEEDER ---
+DB_FILE = 'registry_database.db'
+
+# Check if the database already exists. If not, build it from the Excel file!
+if not os.path.exists(DB_FILE):
+    st.info("Initializing database from Excel template...")
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        
+        # Load all tabs from the Excel file
+        xls = pd.ExcelFile('mock_university_database.xlsx')
+        
+        # Loop through each tab and turn it into a SQLite table
+        for sheet_name in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet_name)
+            df.to_sql(sheet_name, conn, if_exists='replace', index=False)
+            
+        conn.commit()
+        conn.close()
+        st.success("Database successfully seeded with test data!")
+    except Exception as e:
+        st.error(f"Error seeding database: {e}")
 
 # 1. Setup the Page
 st.set_page_config(page_title="Registry Workload System", layout="wide")
@@ -88,6 +112,20 @@ else:
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.clear()
+        st.rerun()
+
+    # --- ADMIN TOOLS ---
+    st.sidebar.divider()
+    if st.sidebar.button("🚨 Reset Database to Default"):
+        import os
+        # 1. Delete the current messy database
+        if os.path.exists('registry_database.db'):
+            os.remove('registry_database.db')
+        
+        # 2. Log the user out so the app restarts completely
+        st.session_state.clear()
+        
+        # 3. Reload the page (triggers the Excel seeder at the top!)
         st.rerun()
         
     # --- PASSWORD UPDATER FEATURE ---
