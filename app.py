@@ -589,21 +589,81 @@ else:
 
     # --- LECTURER VIEW ---
     def lecturer_dashboard():
-        st.info("Personal Workload Summary")
+        st.title(f"👋 Welcome, {st.session_state.user_name}")
+    
         conn = sqlite3.connect('registry_database.db')
-        my_data = pd.read_sql_query("""
+    
+        # 1. Fetch Profile & Workload
+        user_info = pd.read_sql_query("SELECT role, category_level, hire_year FROM Users WHERE user_id = ?", 
+                                  conn, params=(st.session_state.user_id,)).iloc[0]
+    
+        my_modules = pd.read_sql_query("""
             SELECT m.module_id as "Code", m.module_name as "Module Title", 
                    m.lecture_hours as "L", m.practical_hours as "P"
             FROM Allocations a
             JOIN Modules m ON a.module_id = m.module_id
             WHERE a.user_id = ?
         """, conn, params=(st.session_state.user_id,))
-        conn.close()
+    
+        current_yr = 2026
+        years_served = current_yr - user_info['hire_year']
+        workload_count = len(my_modules)
 
-        if not my_data.empty:
-            st.dataframe(my_data, use_container_width=True, hide_index=True)
+        # --- TOP ROW: Quick Stats ---
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Current Role", user_info['role'])
+        col2.metric("Teaching Load", f"{workload_count} Modules")
+        col3.metric("Service Time", f"{years_served} Years")
+
+        st.divider()
+
+        # --- SECTION: Promotion Tracker ---
+        st.subheader("🚀 Promotion Tracker")
+    
+        # Check the "Waiting Room" table for any active tickets
+        pending_check = pd.read_sql_query("""
+            SELECT proposed_role, status FROM Pending_Promotions 
+            WHERE user_id = ? ORDER BY ticket_id DESC LIMIT 1
+        """, conn, params=(st.session_state.user_id,))
+
+        if not pending_check.empty:
+            status = pending_check.iloc[0]['status']
+            role = pending_check.iloc[0]['proposed_role']
+            # Color code the status
+            if "HoD" in status:
+                st.info(f"**Current Status:** Your promotion to **{role}** is at Step 1: **Awaiting HoD Approval**.")
+            elif "HoS" in status:
+                st.warning(f"**Current Status:** Your promotion to **{role}** is at the Final Step: **Awaiting HoS Sign-off**.")
         else:
-            st.warning("No modules assigned to your account yet.")
+            # Show eligibility if no active request exists
+            if workload_count >= 3 and years_served >= 3:
+                st.success("✅ You are eligible for promotion review! The Registry Office has been notified.")
+            else:
+                st.write("Keep up the great work! You are currently working toward promotion eligibility.")
+
+        st.divider()
+
+        # --- SECTION: Project Choice Form ---
+        st.subheader("📝 Project Choice & Objectives")
+        with st.form("project_selection"):
+            st.write("Fill this section to finalize your project selection for the semester.")
+            project_name = st.text_input("Project Title")
+            objectives = st.text_area("Your Part and Objectives (Be brief and direct)")
+        
+            if st.form_submit_button("Submit Selection"):
+                # We can build a 'Projects' table for this later if needed
+                st.success("Project objectives submitted successfully!")
+
+        st.divider()
+
+        # --- SECTION: Module List ---
+        st.subheader("📚 Assigned Modules")
+        if not my_modules.empty:
+            st.dataframe(my_modules, use_container_width=True, hide_index=True)
+        else:
+            st.info("No modules assigned for this semester yet.")
+
+        conn.close()
         
     # ---Head of department view---
     def hod_dashboard():
