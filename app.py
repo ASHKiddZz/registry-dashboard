@@ -30,6 +30,20 @@ patch_conn.execute('''
 patch_conn.commit()
 patch_conn.close()
 
+# Silent DB Upgrade 3: Lecturer Remarks Inbox
+patch_conn = sqlite3.connect('registry_database.db')
+patch_conn.execute('''
+    CREATE TABLE IF NOT EXISTS Lecturer_Remarks (
+        remark_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        remark_text TEXT,
+        status TEXT DEFAULT 'Unread',
+        submit_date DATE DEFAULT CURRENT_DATE
+    )
+''')
+patch_conn.commit()
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
@@ -96,6 +110,37 @@ else:
                     st.error("Passwords must match and not be empty.")
 
     st.title(f"{st.session_state.user_role} Dashboard")
+
+    # --- NOTIFICATION CENTER: Unread Staff Remarks ---
+    conn = sqlite3.connect('registry_database.db')
+    remarks_df = pd.read_sql_query("""
+        SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
+        FROM Lecturer_Remarks r
+        JOIN Users u ON r.user_id = u.user_id
+        WHERE r.status = 'Unread'
+    """, conn)
+
+    if not remarks_df.empty:
+        # st.expander creates a drop-down box that is bright and noticeable
+        with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
+            st.dataframe(remarks_df, hide_index=True, use_container_width=True)
+            
+            with st.form("clear_remark_form"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
+                with col2:
+                    st.write("") # Spacing
+                    st.write("")
+                    if st.form_submit_button("Acknowledge & Clear"):
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
+                        conn.commit()
+                        st.success("Remark cleared from dashboard!")
+                        st.rerun()
+    conn.close()
+    
+    st.divider()
     
     # --- TABBED REGISTRY OFFICER VIEW ---
     def registry_dashboard():
@@ -590,13 +635,13 @@ else:
     # --- LECTURER VIEW ---
     def lecturer_dashboard():
         st.title(f"👋 Welcome, {st.session_state.user_name}")
-    
+        
         conn = sqlite3.connect('registry_database.db')
-    
+        
         # 1. Fetch Profile & Workload
         user_info = pd.read_sql_query("SELECT role, category_level, hire_year FROM Users WHERE user_id = ?", 
-                                  conn, params=(st.session_state.user_id,)).iloc[0]
-    
+                                      conn, params=(st.session_state.user_id,)).iloc[0]
+        
         my_modules = pd.read_sql_query("""
             SELECT m.module_id as "Code", m.module_name as "Module Title", 
                    m.lecture_hours as "L", m.practical_hours as "P"
@@ -604,7 +649,7 @@ else:
             JOIN Modules m ON a.module_id = m.module_id
             WHERE a.user_id = ?
         """, conn, params=(st.session_state.user_id,))
-    
+        
         current_yr = 2026
         years_served = current_yr - user_info['hire_year']
         workload_count = len(my_modules)
@@ -619,7 +664,7 @@ else:
 
         # --- SECTION: Promotion Tracker ---
         st.subheader("🚀 Promotion Tracker")
-    
+        
         # Check the "Waiting Room" table for any active tickets
         pending_check = pd.read_sql_query("""
             SELECT proposed_role, status FROM Pending_Promotions 
@@ -643,17 +688,24 @@ else:
 
         st.divider()
 
-        # --- SECTION: Project Choice Form ---
-        st.subheader("📝 Project Choice & Objectives")
-        with st.form("project_selection"):
-            st.write("Fill this section to finalize your project selection for the semester.")
-            project_name = st.text_input("Project Title")
-            objectives = st.text_area("Your Part and Objectives (Be brief and direct)")
-        
-            if st.form_submit_button("Submit Selection"):
-                # We can build a 'Projects' table for this later if needed
-                st.success("Project objectives submitted successfully!")
-
+        # --- SECTION: Remarks for Registry ---
+        st.subheader("💬 Registry Communications")
+        with st.form("registry_remarks_form"):
+            st.write("Submit a remark or flag an issue regarding your workload/modules directly to the Registry.")
+            remark = st.text_area("Enter your remark here:")
+            
+            if st.form_submit_button("Send to Registry"):
+                if remark.strip(): # Ensures they don't send a blank message
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO Lecturer_Remarks (user_id, remark_text) 
+                        VALUES (?, ?)
+                    """, (st.session_state.user_id, remark))
+                    conn.commit()
+                    st.success("Your remark has been successfully flagged for the Registry Office!")
+                else:
+                    st.error("Please type a remark before submitting.")
+                    
         st.divider()
 
         # --- SECTION: Module List ---
