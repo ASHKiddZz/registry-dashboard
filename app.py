@@ -149,39 +149,41 @@ else:
 
     st.title(f"{st.session_state.user_role} Dashboard")
 
-    # --- NOTIFICATION CENTER: Unread Staff Remarks ---
-    conn = sqlite3.connect('registry_database.db')
-    remarks_df = pd.read_sql_query("""
-        SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
-        FROM Lecturer_Remarks r
-        JOIN Users u ON r.user_id = u.user_id
-        WHERE r.status = 'Unread'
-    """, conn)
-
-    if not remarks_df.empty:
-        # st.expander creates a drop-down box that is bright and noticeable
-        with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
-            st.dataframe(remarks_df, hide_index=True, use_container_width=True)
-            
-            with st.form("clear_remark_form"):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
-                with col2:
-                    st.write("") # Spacing
-                    st.write("")
-                    if st.form_submit_button("Acknowledge & Clear"):
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
-                        conn.commit()
-                        st.success("Remark cleared from dashboard!")
-                        st.rerun()
-    conn.close()
     
-    st.divider()
     
     # --- TABBED REGISTRY OFFICER VIEW ---
     def registry_dashboard():
+        # --- NOTIFICATION CENTER: Unread Staff Remarks ---
+        conn = sqlite3.connect('registry_database.db')
+        remarks_df = pd.read_sql_query("""
+            SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
+            FROM Lecturer_Remarks r
+            JOIN Users u ON r.user_id = u.user_id
+            WHERE r.status = 'Unread'
+        """, conn)
+
+        if not remarks_df.empty:
+            # st.expander creates a drop-down box that is bright and noticeable
+            with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
+                st.dataframe(remarks_df, hide_index=True, use_container_width=True)
+            
+                with st.form("clear_remark_form"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
+                    with col2:
+                        st.write("") # Spacing
+                        st.write("")
+                        if st.form_submit_button("Acknowledge & Clear"):
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
+                            conn.commit()
+                            st.success("Remark cleared from dashboard!")
+                            st.rerun()
+        conn.close()
+    
+        st.divider()
+        
         tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
