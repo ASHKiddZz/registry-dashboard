@@ -27,6 +27,19 @@ if not os.path.exists(DB_FILE):
                 if 'duration' not in df.columns: df['duration'] = 12
                 if 'practical_hours' not in df.columns: df['practical_hours'] = 0
                 if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
+
+            elif sheet_name == 'Modules':
+                if 'duration' not in df.columns: df['duration'] = 12
+                if 'practical_hours' not in df.columns: df['practical_hours'] = 0
+                if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
+            
+            # --- ADD THIS NEW BLOCK FOR ALLOCATIONS ---
+            elif sheet_name == 'Allocations':
+                if 'cohort' not in df.columns: df['cohort'] = 'Group A' # Default cohort
+            # ------------------------------------------
+            
+            elif sheet_name == 'Pending_Promotions':
+                if 'status' not in df.columns: df['status'] = 'Pending HoD'
             
             elif sheet_name == 'Pending_Promotions':
                 if 'status' not in df.columns: df['status'] = 'Pending HoD'
@@ -37,6 +50,7 @@ if not os.path.exists(DB_FILE):
             # First, fill specific numeric blanks safely
             if 'duration' in df.columns: df['duration'] = df['duration'].fillna(12)
             if 'hire_year' in df.columns: df['hire_year'] = df['hire_year'].fillna(2024)
+            if 'cohort' in df.columns: df['cohort'] = df['cohort'].fillna('Group A')
             
             # Then, catch absolutely any other blank text cells and mark them as "Unknown" or empty string
             df = df.fillna('Unknown') 
