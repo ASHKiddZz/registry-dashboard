@@ -4,28 +4,51 @@ import pandas as pd
 import datetime
 import os
 
-# --- DATABASE SEEDER ---
+# --- BULLETPROOF DATABASE SEEDER ---
 DB_FILE = 'registry_database.db'
 
-# Check if the database already exists. If not, build it from the Excel file!
 if not os.path.exists(DB_FILE):
-    st.info("Initializing database from Excel template...")
+    st.info("Initializing robust database from Excel template...")
     try:
         conn = sqlite3.connect(DB_FILE)
-        
-        # Load all tabs from the Excel file
         xls = pd.ExcelFile('mock_university_database.xlsx')
         
-        # Loop through each tab and turn it into a SQLite table
         for sheet_name in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet_name)
+            
+            # --- 1. COLUMN-LEVEL SAFETY NET ---
+            # If the user completely forgot to include a column, we create it here with a default value.
+            if sheet_name == 'Users':
+                if 'password' not in df.columns: df['password'] = 'Pass123!'
+                if 'hire_year' not in df.columns: df['hire_year'] = 2024
+                if 'category_level' not in df.columns: df['category_level'] = 'N/A'
+                
+            elif sheet_name == 'Modules':
+                if 'duration' not in df.columns: df['duration'] = 12
+                if 'practical_hours' not in df.columns: df['practical_hours'] = 0
+                if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
+            
+            elif sheet_name == 'Pending_Promotions':
+                if 'status' not in df.columns: df['status'] = 'Pending HoD'
+                
+            # --- 2. ROW-LEVEL SAFETY NET (Empty Cells) ---
+            # If the column exists, but the user left specific cells blank (NaN), we fill those blanks.
+            
+            # First, fill specific numeric blanks safely
+            if 'duration' in df.columns: df['duration'] = df['duration'].fillna(12)
+            if 'hire_year' in df.columns: df['hire_year'] = df['hire_year'].fillna(2024)
+            
+            # Then, catch absolutely any other blank text cells and mark them as "Unknown" or empty string
+            df = df.fillna('Unknown') 
+            
+            # Save the clean, repaired dataframe to the SQL database
             df.to_sql(sheet_name, conn, if_exists='replace', index=False)
             
         conn.commit()
         conn.close()
-        st.success("Database successfully seeded with test data!")
+        st.success("Database successfully seeded and cleaned!")
     except Exception as e:
-        st.error(f"Error seeding database: {e}")
+        st.error(f"Critical error seeding database: {e}")
 
 # 1. Setup the Page
 st.set_page_config(page_title="Registry Workload System", layout="wide")
