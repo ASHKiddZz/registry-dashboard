@@ -794,12 +794,18 @@ else:
                     
                     cursor = conn.cursor()
                     
-                    # --- THE FIX: Explicitly inject 'Unread' and the date ---
+                    # 1. Find the current highest remark_id in the database
+                    cursor.execute("SELECT MAX(remark_id) FROM Lecturer_Remarks")
+                    max_id_result = cursor.fetchone()[0]
+                    
+                    # 2. If the table is empty, start at 1. Otherwise, add 1 to the max.
+                    new_remark_id = 1 if max_id_result is None else int(max_id_result) + 1
+                    
+                    # 3. Explicitly insert the new_remark_id into the database
                     cursor.execute("""
-                        INSERT INTO Lecturer_Remarks (user_id, remark_text, status, submit_date) 
-                        VALUES (?, ?, 'Unread', ?)
-                    """, (st.session_state.user_id, remark, today_date))
-                    # --------------------------------------------------------
+                        INSERT INTO Lecturer_Remarks (remark_id, user_id, remark_text, status, submit_date) 
+                        VALUES (?, ?, ?, 'Unread', ?)
+                    """, (new_remark_id, st.session_state.user_id, remark, today_date))
                     
                     conn.commit()
                     st.success("Your remark has been successfully flagged for the Registry Office!")
