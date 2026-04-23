@@ -403,7 +403,14 @@ else:
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
                         # Check if the column exists to prevent crashes. Default to 12 if missing.
                         default_dur = int(current_mod_data['duration']) if 'duration' in current_mod_data else 12
+                        # --- BULLETPROOF DURATION CHECK ---
+                    try:
+                        default_dur = int(current_mod_data['duration'])
+                    except KeyError:
+                        default_dur = 12 # Fallback if the database is stubborn
+
                         edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
+# ----------------------------------
                         
                     with col2:
                         edit_l_hrs = st.number_input("Update Lecture Hours (L)", min_value=0, value=int(current_mod_data['lecture_hours']))
