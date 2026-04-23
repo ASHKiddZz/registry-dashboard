@@ -401,7 +401,9 @@ else:
                         # We lock the Module Code as read-only info so they don't break database links
                         st.info(f"Editing Module Code: **{selected_mod_id}**")
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
-                        edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=int(current_mod_data['duration']))
+                        # Check if the column exists to prevent crashes. Default to 12 if missing.
+                        default_dur = int(current_mod_data['duration']) if 'duration' in current_mod_data else 12
+                        edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
                         
                     with col2:
                         edit_l_hrs = st.number_input("Update Lecture Hours (L)", min_value=0, value=int(current_mod_data['lecture_hours']))
@@ -758,12 +760,19 @@ else:
             remark = st.text_area("Enter your remark here:")
             
             if st.form_submit_button("Send to Registry"):
-                if remark.strip(): # Ensures they don't send a blank message
+                if remark.strip(): 
+                    import datetime # Ensure we can get today's date
+                    today_date = datetime.date.today().strftime("%Y-%m-%d")
+                    
                     cursor = conn.cursor()
+                    
+                    # --- THE FIX: Explicitly inject 'Unread' and the date ---
                     cursor.execute("""
-                        INSERT INTO Lecturer_Remarks (user_id, remark_text) 
-                        VALUES (?, ?)
-                    """, (st.session_state.user_id, remark))
+                        INSERT INTO Lecturer_Remarks (user_id, remark_text, status, submit_date) 
+                        VALUES (?, ?, 'Unread', ?)
+                    """, (st.session_state.user_id, remark, today_date))
+                    # --------------------------------------------------------
+                    
                     conn.commit()
                     st.success("Your remark has been successfully flagged for the Registry Office!")
                 else:
