@@ -414,7 +414,14 @@ else:
                         
                     with col2:
                         edit_l_hrs = st.number_input("Update Lecture Hours (L)", min_value=0, value=int(current_mod_data['lecture_hours']))
-                        edit_t_hrs = st.number_input("Update Tutorial Hours (T)", min_value=0, value=int(current_mod_data['tutorial_hours']))
+                        # --- BULLETPROOF TUTORIAL HOURS CHECK ---
+                    try:
+                        default_t_hrs = int(current_mod_data['tutorial_hours'])
+                    except KeyError:
+                        default_t_hrs = 0 # Fallback if the database is missing this column
+
+                        edit_t_hrs = st.number_input("Update Tutorial Hours (T)", min_value=0, value=default_t_hrs)
+# ----------------------------------------
                         edit_p_hrs = st.number_input("Update Practical Hours (P)", min_value=0, value=int(current_mod_data['practical_hours']))
                         
                     st.write("Actions:")
