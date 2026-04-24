@@ -851,25 +851,37 @@ else:
                     JOIN Modules m ON a.module_id = m.module_id
                 """, conn)
                 
-                # --- NEW: Smart Filtering System ---
-                col1, col2 = st.columns([3, 1]) # Make the dropdown wider than the metric box
+                # --- THE NEW DUAL-FILTER SYSTEM ---
+                col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Create a list of unique lecturers, adding "All Lecturers" at the very top
                     lecturer_list = ["All Lecturers"] + sorted(alloc_df["Lecturer"].unique().tolist())
-                    selected_lecturer = st.selectbox("🔍 Filter by Lecturer", lecturer_list)
-                
-                # Apply the filter based on what Bob selected
-                if selected_lecturer == "All Lecturers":
-                    display_df = alloc_df
-                else:
-                    display_df = alloc_df[alloc_df["Lecturer"] == selected_lecturer]
+                    selected_lecturer = st.selectbox("👤 Filter by Lecturer", lecturer_list)
                     
                 with col2:
-                    # Display a beautiful UI metric showing the exact count
-                    st.metric(label="Total Assigned Modules", value=len(display_df))
+                    module_list = ["All Modules"] + sorted(alloc_df["Module Code"].unique().tolist())
+                    selected_module = st.selectbox("📚 Filter by Module Code", module_list)
                 
-                # Display the final filtered dataframe
+                # Start with the full dataframe
+                display_df = alloc_df
+                
+                # Apply Lecturer filter if used
+                if selected_lecturer != "All Lecturers":
+                    display_df = display_df[display_df["Lecturer"] == selected_lecturer]
+                    
+                # Apply Module filter if used
+                if selected_module != "All Modules":
+                    display_df = display_df[display_df["Module Code"] == selected_module]
+                    
+                # --- DYNAMIC METRICS ---
+                # We add two metric boxes to show real-time stats based on the filters
+                met_col1, met_col2 = st.columns(2)
+                with met_col1:
+                    st.metric(label="Total Assigned Modules", value=len(display_df))
+                with met_col2:
+                    st.metric(label="Unique Lecturers", value=display_df["Lecturer"].nunique())
+                
+                # Display the final filtered table
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
                 # -----------------------------------
                 
