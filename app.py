@@ -832,39 +832,71 @@ else:
 
         conn.close()
         
-    # ---Head of department view---
+    # --- TABBED HOD VIEW ---
     def hod_dashboard():
-        st.title("📋 HoD Approval Portal")
-        st.write("Reviewing promotion recommendations from the Registry Office.")
-
-        conn = sqlite3.connect('registry_database.db')
-    
-        # We join with Users to get the names, but only for tickets waiting for the HoD
-        query = """
-        SELECT p.ticket_id, u.name, p.proposed_role, p.proposed_category, p.status 
-        FROM Pending_Promotions p
-        JOIN Users u ON p.user_id = u.user_id
-        WHERE p.status = 'Pending HoD'
-        """
-        df_pending = pd.read_sql(query, conn)
-
-        if df_pending.empty:
-            st.info("No pending requests to review. Grab a coffee! ☕")
-        else:
-            st.dataframe(df_pending)
+        st.title("🎓 Head of Department Dashboard")
+        st.write("Oversee departmental module allocations and review staff promotion requests.")
         
-            with st.form("hod_approval_form"):
-                ticket_id = st.selectbox("Select Ticket ID to Approve", df_pending['ticket_id'])
-            
-                if st.form_submit_button("Approve & Send to HoS"):
-                    cursor = conn.cursor()
-                    # Push the ticket to the next level (HoS)
-                    cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoS' WHERE ticket_id = ?", (ticket_id,))
-                    conn.commit()
-                    st.success(f"Ticket #{ticket_id} moved to the Head of School!")
-                    st.rerun()
-    
-        conn.close()
+        tab1, tab2 = st.tabs(["Department Allocations", "Staff Promotions"])
+        
+        # --- TAB 1: ALLOCATIONS OVERVIEW ---
+        with tab1:
+            st.subheader("Current Module Allocations")
+            conn = sqlite3.connect('registry_database.db')
+            try:
+                alloc_df = pd.read_sql_query("""
+                    SELECT u.name as "Lecturer", a.module_id as "Module Code", m.module_name as "Module Title"
+                    FROM Allocations a
+                    JOIN Users u ON a.user_id = u.user_id
+                    JOIN Modules m ON a.module_id = m.module_id
+                """, conn)
+                st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Error loading allocations: {e}")
+            conn.close()
+
+        # --- TAB 2: PROMOTION APPROVALS ---
+        with tab2:
+            st.subheader("Promotion Requests (Action Required)")
+            conn = sqlite3.connect('registry_database.db')
+            try:
+                # Only pull tickets that are specifically waiting for the HoD
+                promo_df = pd.read_sql_query("""
+                    SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
+                        p.proposed_role as "Requested Role", p.proposed_category as "Requested Category", p.status
+                    FROM Pending_Promotions p
+                    JOIN Users u ON p.user_id = u.user_id
+                    WHERE p.status = 'Pending HoD'
+                """, conn)
+                
+                if promo_df.empty:
+                    st.info("✅ No pending promotions require your approval at this time.")
+                else:
+                    # Display the pending requests
+                    st.dataframe(promo_df, use_container_width=True, hide_index=True)
+                    
+                    st.divider()
+                    st.write("### Process a Request")
+                    
+                    with st.form("hod_promo_form"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            selected_ticket = st.selectbox("Select Ticket ID", promo_df['ticket_id'])
+                        with col2:
+                            action = st.radio("Decision", ["Approve (Forward to HoS)", "Reject"], horizontal=True)
+                            
+                        if st.form_submit_button("Submit Decision", use_container_width=True):
+                            cursor = conn.cursor()
+                            # Determine the new status based on the HoD's decision
+                            new_status = 'Pending HoS' if 'Approve' in action else 'Rejected'
+                            
+                            cursor.execute("UPDATE Pending_Promotions SET status = ? WHERE ticket_id = ?", (new_status, selected_ticket))
+                            conn.commit()
+                            st.success(f"Ticket #{selected_ticket} has been marked as: {new_status}")
+                            st.rerun()
+            except Exception as e:
+                st.error(f"Error loading promotions: {e}")
+            conn.close()
 
     # ---Head of School view---
     def hos_dashboard():
