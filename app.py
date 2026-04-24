@@ -850,7 +850,29 @@ else:
                     JOIN Users u ON a.user_id = u.user_id
                     JOIN Modules m ON a.module_id = m.module_id
                 """, conn)
-                st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+                
+                # --- NEW: Smart Filtering System ---
+                col1, col2 = st.columns([3, 1]) # Make the dropdown wider than the metric box
+                
+                with col1:
+                    # Create a list of unique lecturers, adding "All Lecturers" at the very top
+                    lecturer_list = ["All Lecturers"] + sorted(alloc_df["Lecturer"].unique().tolist())
+                    selected_lecturer = st.selectbox("🔍 Filter by Lecturer", lecturer_list)
+                
+                # Apply the filter based on what Bob selected
+                if selected_lecturer == "All Lecturers":
+                    display_df = alloc_df
+                else:
+                    display_df = alloc_df[alloc_df["Lecturer"] == selected_lecturer]
+                    
+                with col2:
+                    # Display a beautiful UI metric showing the exact count
+                    st.metric(label="Total Assigned Modules", value=len(display_df))
+                
+                # Display the final filtered dataframe
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # -----------------------------------
+                
             except Exception as e:
                 st.error(f"Error loading allocations: {e}")
             conn.close()
