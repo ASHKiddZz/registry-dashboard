@@ -932,9 +932,92 @@ else:
                 st.error(f"Error loading promotions: {e}")
             conn.close()
 
-    # ---Head of School view---
+    # --- TABBED HOS VIEW ---
     def hos_dashboard():
-        st.info("🏛️ Welcome to the HoS Portal. Final executive sign-offs will appear here.")
+        st.title("🏛️ Head of School Dashboard")
+        st.write("Finalize staff promotions and oversee school-wide metrics.")
+        
+        tab1, tab2 = st.tabs(["Final Promotion Approvals", "School Overview"])
+        
+        # --- TAB 1: FINAL PROMOTION APPROVALS ---
+        with tab1:
+            st.subheader("Pending Final Approvals")
+            conn = sqlite3.connect('registry_database.db')
+            try:
+                # Only pull tickets that have been forwarded by the HoD
+                promo_df = pd.read_sql_query("""
+                    SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
+                        p.proposed_role as "Requested Role", p.proposed_category as "Requested Category"
+                FROM Pending_Promotions p
+                JOIN Users u ON p.user_id = u.user_id
+                WHERE p.status = 'Pending HoS'
+                """, conn)
+                
+                if promo_df.empty:
+                    st.info("✅ No promotions require final approval at this time.")
+                else:
+                    st.dataframe(promo_df, use_container_width=True, hide_index=True)
+                    
+                    st.divider()
+                    st.write("### Finalize Request")
+                    
+                    with st.form("hos_promo_form"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            selected_ticket = st.selectbox("Select Ticket ID", promo_df['ticket_id'])
+                        with col2:
+                            action = st.radio("Final Decision", ["Approve & Apply Promotion", "Reject"], horizontal=True)
+                            
+                        if st.form_submit_button("Submit Final Decision", use_container_width=True):
+                            cursor = conn.cursor()
+                            
+                            if "Approve" in action:
+                                # 1. Grab the exact details of the requested promotion
+                                cursor.execute("SELECT user_id, proposed_role, proposed_category FROM Pending_Promotions WHERE ticket_id = ?", (selected_ticket,))
+                                ticket_data = cursor.fetchone()
+                                target_user_id = ticket_data[0]
+                                new_role = ticket_data[1]
+                                new_category = ticket_data[2]
+                                
+                                # 2. THE MAGIC: Actually update the user's official profile in the database!
+                                cursor.execute("UPDATE Users SET role = ?, category_level = ? WHERE user_id = ?", (new_role, new_category, target_user_id))
+                                
+                                # 3. Mark the ticket as officially completed
+                                cursor.execute("UPDATE Pending_Promotions SET status = 'Approved' WHERE ticket_id = ?", (selected_ticket,))
+                                st.success(f"Promotion Approved! The applicant's official role has been updated to {new_role}.")
+                            else:
+                                # Mark the ticket as rejected
+                                cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected' WHERE ticket_id = ?", (selected_ticket,))
+                                st.warning(f"Ticket #{selected_ticket} has been Rejected.")
+                                
+                            conn.commit()
+                            st.rerun()
+            except Exception as e:
+                st.error(f"Error loading promotions: {e}")
+            conn.close()
+
+        # --- TAB 2: SCHOOL OVERVIEW ---
+        with tab2:
+            st.subheader("School-Wide Staff Metrics")
+            conn = sqlite3.connect('registry_database.db')
+            try:
+                # A quick group-by query to show the HoS how many staff they have in each role
+                users_df = pd.read_sql_query("SELECT role as 'Staff Role', COUNT(user_id) as 'Total Count' FROM Users GROUP BY role", conn)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(users_df, use_container_width=True, hide_index=True)
+                with col2:
+                    # Add a quick metric for total modules across the whole school
+                    total_mods = pd.read_sql_query("SELECT COUNT(*) FROM Modules", conn).iloc[0,0]
+                    st.metric("Total Modules Run by School", total_mods)
+                    
+                    # Metric for total staff
+                    total_staff = users_df['Total Count'].sum()
+                    st.metric("Total School Staff", total_staff)
+            except Exception as e:
+                st.error(f"Error loading overview: {e}")
+            conn.close()
 
 # ==========================================
 #      THE TRAFFIC COP (ROLE-BASED ROUTING)
