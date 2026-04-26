@@ -686,6 +686,7 @@ else:
 
             conn = sqlite3.connect('registry_database.db')
 
+            import datetime # Just in case it's not imported at the top
             current_yr = datetime.datetime.now().year
         
             # Complex SQL query that joins tables AND calculates time served
@@ -729,10 +730,11 @@ else:
                         new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
 
                         # 3. Explicitly insert the new_ticket_id into the database
+                        # ---> THE FIX: Using selected_user_id instead of session_state
                         cursor.execute("""
                             INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status)
                             VALUES (?, ?, ?, ?, 'Pending HoD')
-                        """, (new_ticket_id, st.session_state.user_id, new_role, new_category))
+                        """, (new_ticket_id, selected_user_id, new_role, new_category))
             
                         conn.commit()
                         st.success(f"Promotion request for {selected_staff} sent to HoD for approval!")
