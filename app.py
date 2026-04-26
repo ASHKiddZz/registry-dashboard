@@ -721,10 +721,18 @@ else:
                     if st.form_submit_button("Submit for Approval"):
                         cursor = conn.cursor()
                         # We insert into our new waiting room table instead of updating the user directly
+                        # 1. Find the current highest ticket_id in the database
+                        cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
+                        max_id_result = cursor.fetchone()[0]
+
+                        # 2. If the table is empty, start at 1. Otherwise, add 1 to the max.
+                        new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
+
+                        # 3. Explicitly insert the new_ticket_id into the database
                         cursor.execute("""
-                            INSERT INTO Pending_Promotions (user_id, proposed_role, proposed_category, status)
-                            VALUES (?, ?, ?, 'Pending HoD')
-                        """, (selected_user_id, new_role, new_category))
+                            INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status)
+                            VALUES (?, ?, ?, ?, 'Pending HoD')
+                        """, (new_ticket_id, st.session_state.user_id, new_role, new_category))
             
                         conn.commit()
                         st.success(f"Promotion request for {selected_staff} sent to HoD for approval!")
