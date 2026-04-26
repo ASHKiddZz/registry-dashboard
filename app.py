@@ -685,8 +685,6 @@ else:
             st.markdown("**Eligible for Academic Promotion (3+ Modules Assigned)**")
 
             conn = sqlite3.connect('registry_database.db')
-
-            import datetime # Just in case it's not imported at the top
             current_yr = datetime.datetime.now().year
         
             # Complex SQL query that joins tables AND calculates time served
