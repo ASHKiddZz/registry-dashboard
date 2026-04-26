@@ -760,7 +760,7 @@ else:
             WHERE a.user_id = ?
         """, conn, params=(st.session_state.user_id,))
         
-        current_yr = 2026
+        current_yr = datetime.datetime.now().year # Made this dynamic using your global datetime!
         years_served = current_yr - user_info['hire_year']
         workload_count = len(my_modules)
 
@@ -772,29 +772,46 @@ else:
 
         st.divider()
 
-        # --- SECTION: Promotion Tracker ---
+        # --- SECTION: UPGRADED VISUAL PROMOTION TRACKER ---
         st.subheader("🚀 Promotion Tracker")
+        st.write("Monitor the real-time status of your career advancement requests.")
         
-        # Check the "Waiting Room" table for any active tickets
-        pending_check = pd.read_sql_query("""
-            SELECT proposed_role, status FROM Pending_Promotions 
-            WHERE user_id = ? ORDER BY ticket_id DESC LIMIT 1
-        """, conn, params=(st.session_state.user_id,))
-
-        if not pending_check.empty:
-            status = pending_check.iloc[0]['status']
-            role = pending_check.iloc[0]['proposed_role']
-            # Color code the status
-            if "HoD" in status:
-                st.info(f"**Current Status:** Your promotion to **{role}** is at Step 1: **Awaiting HoD Approval**.")
-            elif "HoS" in status:
-                st.warning(f"**Current Status:** Your promotion to **{role}** is at the Final Step: **Awaiting HoS Sign-off**.")
-        else:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ticket_id, proposed_role, proposed_category, status 
+            FROM Pending_Promotions 
+            WHERE user_id = ?
+            ORDER BY ticket_id DESC
+        """, (st.session_state.user_id,))
+        
+        my_requests = cursor.fetchall()
+        
+        if not my_requests:
             # Show eligibility if no active request exists
             if workload_count >= 3 and years_served >= 3:
                 st.success("✅ You are eligible for promotion review! The Registry Office has been notified.")
             else:
-                st.write("Keep up the great work! You are currently working toward promotion eligibility.")
+                st.info("Keep up the great work! You are currently working toward promotion eligibility.")
+        else:
+            # Loop through every request and build a visual "Tracking Card"
+            for req in my_requests:
+                t_id, p_role, p_cat, status = req
+                
+                with st.container(border=True):
+                    st.markdown(f"**Requested Promotion:** {p_role} *( {p_cat} )*")
+                    
+                    # --- DYNAMIC VISUAL PROGRESS BAR ---
+                    if status == 'Pending HoD':
+                        st.warning("⏳ **Current Status:** Awaiting Department Head (HoD) Review")
+                        st.progress(33)
+                    elif status == 'Pending HoS':
+                        st.info("🔍 **Current Status:** Awaiting Final Head of School (HoS) Approval")
+                        st.progress(66)
+                    elif status == 'Approved':
+                        st.success("🎉 **Current Status:** Approved! Your official title has been updated.")
+                        st.progress(100)
+                    elif status == 'Rejected':
+                        st.error("❌ **Current Status:** Rejected. Please schedule a meeting with your HoD for feedback.")
 
         st.divider()
 
@@ -806,19 +823,15 @@ else:
             
             if st.form_submit_button("Send to Registry"):
                 if remark.strip(): 
-                    import datetime # Ensure we can get today's date
-                    today_date = datetime.date.today().strftime("%Y-%m-%d")
+                    today_date = datetime.date.today().strftime("%Y-%m-%d") # Removed the local import!
                     
                     cursor = conn.cursor()
                     
-                    # 1. Find the current highest remark_id in the database
                     cursor.execute("SELECT MAX(remark_id) FROM Lecturer_Remarks")
                     max_id_result = cursor.fetchone()[0]
                     
-                    # 2. If the table is empty, start at 1. Otherwise, add 1 to the max.
                     new_remark_id = 1 if max_id_result is None else int(max_id_result) + 1
                     
-                    # 3. Explicitly insert the new_remark_id into the database
                     cursor.execute("""
                         INSERT INTO Lecturer_Remarks (remark_id, user_id, remark_text, status, submit_date) 
                         VALUES (?, ?, ?, 'Unread', ?)
