@@ -676,68 +676,84 @@ else:
             conn.close()
 
         # ==========================================
-        #         TAB 4: PROMOTIONS & ROTATIONS
+        #         TAB 4: PROMOTION MANAGEMENT
         # ==========================================
         with tab4:
-            st.header("⭐ Promotion & Rotation Radar")
-
-            # 1. The Academic Ladder (Promotions)
-            st.markdown("**Eligible for Academic Promotion (3+ Modules Assigned)**")
+            st.header("📋 Promotion Management")
 
             conn = sqlite3.connect('registry_database.db')
-            current_yr = datetime.datetime.now().year
-        
-            # Complex SQL query that joins tables AND calculates time served
-            promotion_query = f"""
-            SELECT Users.user_id, Users.name, Users.role, Users.category_level, Users.hire_year, COUNT(Allocations.module_id) as workload_count
-            FROM Users
-            LEFT JOIN Allocations ON Users.user_id = Allocations.user_id
-            WHERE Users.category_level IN ('Category 5 (Other Academic)', 'Category 4 (PhD Staff)')
-            AND ({current_yr} - Users.hire_year) >= 3
-            GROUP BY Users.user_id
-            HAVING workload_count >= 3
-            """
 
-            eligible_df = pd.read_sql_query(promotion_query, conn)
-
-            if eligible_df.empty:
-                st.info("No staff members currently meet the workload criteria for promotion review.")
-            else:
-                st.dataframe(eligible_df)
-
-                # The Approval Form
-                with st.form("approve_promotion"):
-                    st.write("Process an Approved Promotion")
-                    promo_list = eligible_df['user_id'].astype(str) + " - " + eligible_df['name']
-                    selected_promo = st.selectbox("Select Staff Member", promo_list)
-
-                    selected_user_id = int(selected_promo.split(" - ")[0])
-                    selected_staff = selected_promo.split(" - ")[1]
-
-                    new_role = st.selectbox("Select New Role", ["Senior Lecturer", "Associate Professor", "Professor"])
-                    new_category = st.selectbox("Select New Category", ["Category 1 (Management)", "Category 2 (Professional)", "Category 3 (Technical)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)"])
-
-                    if st.form_submit_button("Submit for Approval"):
-                        cursor = conn.cursor()
-                        # We insert into our new waiting room table instead of updating the user directly
-                        # 1. Find the current highest ticket_id in the database
-                        cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
-                        max_id_result = cursor.fetchone()[0]
-
-                        # 2. If the table is empty, start at 1. Otherwise, add 1 to the max.
-                        new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
-
-                        # 3. Explicitly insert the new_ticket_id into the database
-                        # ---> THE FIX: Using selected_user_id instead of session_state
-                        cursor.execute("""
-                            INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status)
-                            VALUES (?, ?, ?, ?, 'Pending HoD')
-                        """, (new_ticket_id, selected_user_id, new_role, new_category))
+            # --- PART 1: THE ELIGIBILITY RADAR (TRACKING) ---
+            st.subheader("📡 Eligibility Radar")
+            st.write("Monitor staff who currently meet the workload and tenure requirements for promotion.")
             
-                        conn.commit()
-                        st.success(f"Promotion request for {selected_staff} sent to HoD for approval!")
-                        st.rerun()
+            current_yr = datetime.datetime.now().year
+            
+            try:
+                radar_df = pd.read_sql_query(f"""
+                    SELECT u.name as "Staff Member", u.role as "Current Role", 
+                           ({current_yr} - u.hire_year) as "Years Served", 
+                           COUNT(a.module_id) as "Active Modules"
+                    FROM Users u
+                    LEFT JOIN Allocations a ON u.user_id = a.user_id
+                    WHERE u.category_level IN ('Category 5 (Other Academic)', 'Category 4 (PhD Staff)')
+                    GROUP BY u.user_id
+                    HAVING "Years Served" >= 3 AND "Active Modules" >= 3
+                """, conn)
+                
+                if radar_df.empty:
+                    st.info("No staff currently meet the baseline eligibility criteria.")
+                else:
+                    st.dataframe(radar_df, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Error loading radar: {e}")
 
+            st.divider()
+
+            # --- PART 2: THE VERIFICATION QUEUE (ACTIONABLE) ---
+            st.subheader("📥 Application Verification Queue")
+            st.write("Review promotion applications submitted by teaching staff before forwarding them to Department Heads.")
+
+            try:
+                # Only pull tickets waiting for Registry verification
+                queue_df = pd.read_sql_query("""
+                    SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
+                           p.proposed_role as "Requested Role", p.proposed_category as "Requested Category"
+                    FROM Pending_Promotions p
+                    JOIN Users u ON p.user_id = u.user_id
+                    WHERE p.status = 'Pending Registry'
+                """, conn)
+
+                if queue_df.empty:
+                    st.success("✅ No new promotion applications require verification at this time.")
+                else:
+                    st.dataframe(queue_df, use_container_width=True, hide_index=True)
+
+                    st.write("### Process Application")
+
+                    with st.form("registry_verify_form"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            selected_ticket = st.selectbox("Select Ticket ID", queue_df['ticket_id'])
+                        with col2:
+                            action = st.radio("Registry Decision", ["Verify & Forward to HoD", "Reject (Ineligible)"], horizontal=True)
+
+                        rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
+
+                        if st.form_submit_button("Submit Verification", use_container_width=True):
+                            if "Reject" in action and not rejection_reason.strip():
+                                st.error("You must provide a reason for rejecting the application.")
+                            else:
+                                cursor = conn.cursor()
+                                new_status = 'Pending HoD' if 'Verify' in action else 'Rejected'
+
+                                cursor.execute("UPDATE Pending_Promotions SET status = ?, rejection_reason = ? WHERE ticket_id = ?", (new_status, rejection_reason, selected_ticket))
+                                conn.commit()
+                                st.success(f"Ticket #{selected_ticket} processed. New Status: {new_status}")
+                                st.rerun()
+            except Exception as e:
+                st.error(f"Error loading verification queue: {e}")
+                
             conn.close()
 
         
@@ -778,7 +794,7 @@ else:
         
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT ticket_id, proposed_role, proposed_category, status 
+            SELECT ticket_id, proposed_role, proposed_category, status, rejection_reason 
             FROM Pending_Promotions 
             WHERE user_id = ?
             ORDER BY ticket_id DESC
@@ -787,31 +803,56 @@ else:
         my_requests = cursor.fetchall()
         
         if not my_requests:
-            # Show eligibility if no active request exists
+            # Check eligibility
             if workload_count >= 3 and years_served >= 3:
-                st.success("✅ You are eligible for promotion review! The Registry Office has been notified.")
+                st.success("✅ You meet the baseline criteria to apply for a promotion!")
+                
+                # --- NEW: LECTURER SUBMISSION FORM ---
+                with st.form("lecturer_promo_form"):
+                    st.write("Submit your application to the Registry Office for verification:")
+                    req_role = st.selectbox("Requested Title", ["Senior Lecturer", "Associate Professor", "Professor"])
+                    req_category = st.selectbox("Requested Category", ["Category 1 (Management)", "Category 2 (Professional)", "Category 3 (Technical)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)"])
+                    
+                    if st.form_submit_button("Submit Application"):
+                        cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
+                        max_id_result = cursor.fetchone()[0]
+                        new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
+                        
+                        # Note the new status: 'Pending Registry'
+                        cursor.execute("""
+                            INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason)
+                            VALUES (?, ?, ?, ?, 'Pending Registry', '')
+                        """, (new_ticket_id, st.session_state.user_id, req_role, req_category))
+                        
+                        conn.commit()
+                        st.success("Application successfully submitted to the Registry Office!")
+                        st.rerun()
             else:
                 st.info("Keep up the great work! You are currently working toward promotion eligibility.")
         else:
             # Loop through every request and build a visual "Tracking Card"
             for req in my_requests:
-                t_id, p_role, p_cat, status = req
+                t_id, p_role, p_cat, status, rej_reason = req
                 
                 with st.container(border=True):
                     st.markdown(f"**Requested Promotion:** {p_role} *( {p_cat} )*")
                     
-                    # --- DYNAMIC VISUAL PROGRESS BAR ---
-                    if status == 'Pending HoD':
+                    # --- UPDATED DUAL-STAGE PROGRESS BAR ---
+                    if status == 'Pending Registry':
+                        st.info("📋 **Current Status:** Awaiting Registry Verification")
+                        st.progress(25) # Step 1
+                    elif status == 'Pending HoD':
                         st.warning("⏳ **Current Status:** Awaiting Department Head (HoD) Review")
-                        st.progress(33)
+                        st.progress(50) # Step 2
                     elif status == 'Pending HoS':
                         st.info("🔍 **Current Status:** Awaiting Final Head of School (HoS) Approval")
-                        st.progress(66)
+                        st.progress(75) # Step 3
                     elif status == 'Approved':
                         st.success("🎉 **Current Status:** Approved! Your official title has been updated.")
-                        st.progress(100)
+                        st.progress(100) # Finish Line
                     elif status == 'Rejected':
-                        st.error("❌ **Current Status:** Rejected. Please schedule a meeting with your HoD for feedback.")
+                        st.error("❌ **Current Status:** Rejected.")
+                        st.write(f"**Official Feedback:** {rej_reason}")
 
         st.divider()
 
