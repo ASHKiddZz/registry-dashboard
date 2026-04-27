@@ -711,7 +711,7 @@ else:
 
             # --- PART 2: THE VERIFICATION QUEUE (ACTIONABLE) ---
             st.subheader("📥 Application Verification Queue")
-            st.write("Review promotion applications submitted by teaching staff before forwarding them to Department Heads.")
+            st.write("Forward verified promotion applications to the respective Department Heads.")
 
             try:
                 # Only pull tickets waiting for Registry verification
@@ -724,32 +724,26 @@ else:
                 """, conn)
 
                 if queue_df.empty:
-                    st.success("✅ No new promotion applications require verification at this time.")
+                    st.success("✅ No new promotion applications require forwarding at this time.")
                 else:
                     st.dataframe(queue_df, use_container_width=True, hide_index=True)
 
                     st.write("### Process Application")
 
                     with st.form("registry_verify_form"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            selected_ticket = st.selectbox("Select Ticket ID", queue_df['ticket_id'])
-                        with col2:
-                            action = st.radio("Registry Decision", ["Verify & Forward to HoD", "Reject (Ineligible)"], horizontal=True)
+                        # Simplified UI: Just select the ticket and forward it
+                        selected_ticket = st.selectbox("Select Ticket ID to Process", queue_df['ticket_id'])
 
-                        rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
-
-                        if st.form_submit_button("Submit Verification", use_container_width=True):
-                            if "Reject" in action and not rejection_reason.strip():
-                                st.error("You must provide a reason for rejecting the application.")
-                            else:
-                                cursor = conn.cursor()
-                                new_status = 'Pending HoD' if 'Verify' in action else 'Rejected'
-
-                                cursor.execute("UPDATE Pending_Promotions SET status = ?, rejection_reason = ? WHERE ticket_id = ?", (new_status, rejection_reason, selected_ticket))
-                                conn.commit()
-                                st.success(f"Ticket #{selected_ticket} processed. New Status: {new_status}")
-                                st.rerun()
+                        # The submit button now acts as the sole action
+                        if st.form_submit_button("Verify & Forward to HoD", use_container_width=True):
+                            cursor = conn.cursor()
+                            
+                            # Instantly update status to Pending HoD. No rejection logic needed.
+                            cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoD' WHERE ticket_id = ?", (selected_ticket,))
+                            conn.commit()
+                            
+                            st.success(f"Ticket #{selected_ticket} successfully verified and forwarded to the HoD!")
+                            st.rerun()
             except Exception as e:
                 st.error(f"Error loading verification queue: {e}")
                 
