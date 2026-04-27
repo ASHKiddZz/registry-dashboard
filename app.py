@@ -40,9 +40,8 @@ if not os.path.exists(DB_FILE):
             
             elif sheet_name == 'Pending_Promotions':
                 if 'status' not in df.columns: df['status'] = 'Pending HoD'
-            
-            elif sheet_name == 'Pending_Promotions':
-                if 'status' not in df.columns: df['status'] = 'Pending HoD'
+                # --- ADD THIS LINE ---
+                if 'rejection_reason' not in df.columns: df['rejection_reason'] = ''
                 
             # --- 2. ROW-LEVEL SAFETY NET (Empty Cells) ---
             # If the column exists, but the user left specific cells blank (NaN), we fill those blanks.
@@ -981,15 +980,22 @@ else:
                         with col2:
                             action = st.radio("Decision", ["Approve (Forward to HoS)", "Reject"], horizontal=True)
                             
+                        # --- NEW: Mandatory Feedback Box ---
+                        rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
+                        
                         if st.form_submit_button("Submit Decision", use_container_width=True):
-                            cursor = conn.cursor()
-                            # Determine the new status based on the HoD's decision
-                            new_status = 'Pending HoS' if 'Approve' in action else 'Rejected'
-                            
-                            cursor.execute("UPDATE Pending_Promotions SET status = ? WHERE ticket_id = ?", (new_status, selected_ticket))
-                            conn.commit()
-                            st.success(f"Ticket #{selected_ticket} has been marked as: {new_status}")
-                            st.rerun()
+                            # Catch them if they try to reject without giving a reason
+                            if "Reject" in action and not rejection_reason.strip():
+                                st.error("You must provide a rejection reason for the applicant.")
+                            else:
+                                cursor = conn.cursor()
+                                new_status = 'Pending HoS' if 'Approve' in action else 'Rejected'
+                                
+                                # Save both the status and the reason to the database
+                                cursor.execute("UPDATE Pending_Promotions SET status = ?, rejection_reason = ? WHERE ticket_id = ?", (new_status, rejection_reason, selected_ticket))
+                                conn.commit()
+                                st.success(f"Ticket #{selected_ticket} has been marked as: {new_status}")
+                                st.rerun()
             except Exception as e:
                 st.error(f"Error loading promotions: {e}")
             conn.close()
