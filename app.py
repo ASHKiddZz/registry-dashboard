@@ -399,34 +399,27 @@ else:
                 'practical_hours': 'Practical Hrs'
             })
             
-            # Display the cleaned-up dataframe instead of the raw database one
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             
             st.divider()
             
-            # --- NEW: Edit or Delete Existing Module ---
+            # --- CLEAN BULLETPROOF EDIT/DELETE MODULE ---
             st.subheader("Edit or Delete Module")
             
             if not modules_df.empty:
-                # Create a combined string for the dropdown (e.g., "PROG1101C - Programming Concepts")
                 module_list = modules_df['module_id'].astype(str) + " - " + modules_df['module_name']
                 selected_mod_str = st.selectbox("Select Module to Modify", module_list)
                 
                 if selected_mod_str:
-                    # Extract just the module_id from the string
                     selected_mod_id = selected_mod_str.split(" - ")[0]
-                    
-                    # Grab current data
                     current_mod_data = modules_df[modules_df['module_id'] == selected_mod_id].iloc[0]
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        # We lock the Module Code as read-only info so they don't break database links
                         st.info(f"Editing Module Code: **{selected_mod_id}**")
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
                         
-                        # --- CLEAN BULLETPROOF DATA EXTRACTION ---
-                        # .get() safely pulls the number, or defaults to the second number if the column is missing!
+                        # .get() safely pulls the number, or defaults to the second number if missing!
                         default_dur = int(current_mod_data.get('duration', 12))
                         edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
                         
@@ -453,7 +446,6 @@ else:
                         if st.button("Delete Module", type="primary", use_container_width=True):
                             cursor = conn.cursor()
                             cursor.execute("DELETE FROM Modules WHERE module_id=?", (selected_mod_id,))
-                            # Delete any allocations attached to this module to prevent ghost data
                             cursor.execute("DELETE FROM Allocations WHERE module_id=?", (selected_mod_id,))
                             conn.commit()
                             st.warning("Module deleted from system!")
