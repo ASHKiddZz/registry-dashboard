@@ -762,26 +762,23 @@ else:
 
         st.divider()
 
-        # --- SECTION: UPGRADED VISUAL PROMOTION TRACKER ---
-        st.subheader("🚀 Promotion Tracker")
-        st.write("Monitor the real-time status of your career advancement requests.")
+        # --- SECTION: UPGRADED PROMOTION MANAGEMENT ---
+        st.subheader("🚀 Promotion Management")
         
         cursor = conn.cursor()
+        
+        # 1. Check for ACTIVE tickets to see if we should hide the form
         cursor.execute("""
-            SELECT ticket_id, proposed_role, proposed_category, status, rejection_reason 
-            FROM Pending_Promotions 
-            WHERE user_id = ?
-            ORDER BY ticket_id DESC
+            SELECT COUNT(*) FROM Pending_Promotions 
+            WHERE user_id = ? AND status NOT IN ('Approved', 'Rejected')
         """, (st.session_state.user_id,))
+        active_tickets = cursor.fetchone()[0]
         
-        my_requests = cursor.fetchall()
-        
-        if not my_requests:
-            # Check eligibility
+        # 2. Eligibility & Application Form (Only show if NO active tickets exist)
+        if active_tickets == 0:
             if workload_count >= 3 and years_served >= 3:
                 st.success("✅ You meet the baseline criteria to apply for a promotion!")
                 
-                # --- NEW: LECTURER SUBMISSION FORM ---
                 with st.form("lecturer_promo_form"):
                     st.write("Submit your application to the Registry Office for verification:")
                     req_role = st.selectbox("Requested Title", ["Senior Lecturer", "Associate Professor", "Professor"])
@@ -792,7 +789,6 @@ else:
                         max_id_result = cursor.fetchone()[0]
                         new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
                         
-                        # Note the new status: 'Pending Registry'
                         cursor.execute("""
                             INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason)
                             VALUES (?, ?, ?, ?, 'Pending Registry', '')
@@ -804,28 +800,46 @@ else:
             else:
                 st.info("Keep up the great work! You are currently working toward promotion eligibility.")
         else:
-            # Loop through every request and build a visual "Tracking Card"
+            # If they have an active ticket, hide the form so they don't spam applications
+            st.info("⏳ You currently have an active promotion application under review. Please wait for a final decision.")
+
+        st.divider()
+
+        # 3. Application History Tracker (Show ALL past and present tickets)
+        st.write("### Application History")
+        cursor.execute("""
+            SELECT ticket_id, proposed_role, proposed_category, status, rejection_reason 
+            FROM Pending_Promotions 
+            WHERE user_id = ?
+            ORDER BY ticket_id DESC
+        """, (st.session_state.user_id,))
+        
+        my_requests = cursor.fetchall()
+        
+        if not my_requests:
+            st.write("No prior applications found on your record.")
+        else:
+            # Loop through every request to build a permanent history log
             for req in my_requests:
                 t_id, p_role, p_cat, status, rej_reason = req
                 
                 with st.container(border=True):
-                    st.markdown(f"**Requested Promotion:** {p_role} *( {p_cat} )*")
+                    st.markdown(f"**Ticket #{t_id} | Requested Promotion:** {p_role} *( {p_cat} )*")
                     
-                    # --- UPDATED DUAL-STAGE PROGRESS BAR ---
                     if status == 'Pending Registry':
                         st.info("📋 **Current Status:** Awaiting Registry Verification")
-                        st.progress(25) # Step 1
+                        st.progress(25)
                     elif status == 'Pending HoD':
                         st.warning("⏳ **Current Status:** Awaiting Department Head (HoD) Review")
-                        st.progress(50) # Step 2
+                        st.progress(50)
                     elif status == 'Pending HoS':
                         st.info("🔍 **Current Status:** Awaiting Final Head of School (HoS) Approval")
-                        st.progress(75) # Step 3
+                        st.progress(75)
                     elif status == 'Approved':
-                        st.success("🎉 **Current Status:** Approved! Your official title has been updated.")
-                        st.progress(100) # Finish Line
+                        st.success("🎉 **Status:** Approved! Your official title has been updated.")
+                        st.progress(100)
                     elif status == 'Rejected':
-                        st.error("❌ **Current Status:** Rejected.")
+                        st.error("❌ **Status:** Rejected.")
                         st.write(f"**Official Feedback:** {rej_reason}")
 
         st.divider()
