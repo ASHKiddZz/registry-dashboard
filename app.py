@@ -189,41 +189,51 @@ else:
     
     # --- TABBED REGISTRY OFFICER VIEW ---
     def registry_dashboard():
+        st.title("🛡️ Registry Officer Dashboard")
+        
         # --- NOTIFICATION CENTER: Unread Staff Remarks ---
         conn = sqlite3.connect('registry_database.db')
-        remarks_df = pd.read_sql_query("""
-            SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
-            FROM Lecturer_Remarks r
-            JOIN Users u ON r.user_id = u.user_id
-            WHERE r.status = 'Unread'
-        """, conn)
+        
+        try:
+            remarks_df = pd.read_sql_query("""
+                SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
+                FROM Lecturer_Remarks r
+                JOIN Users u ON r.user_id = u.user_id
+                WHERE r.status = 'Unread'
+            """, conn)
 
-        if not remarks_df.empty:
-            # st.expander creates a drop-down box that is bright and noticeable
-            with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
-                st.dataframe(remarks_df, hide_index=True, use_container_width=True)
+            if not remarks_df.empty:
+                # st.expander creates a drop-down box that is bright and noticeable
+                with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
+                    st.dataframe(remarks_df, hide_index=True, use_container_width=True)
+                
+                    with st.form("clear_remark_form"):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
+                        with col2:
+                            st.write("") # Spacing
+                            st.write("")
+                            if st.form_submit_button("Acknowledge & Clear"):
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
+                                conn.commit()
+                                st.success("Remark cleared from dashboard!")
+                                st.rerun()
+        except Exception as e:
+            # If the database crashes here, we will now see exactly why!
+            st.error(f"Error loading remarks: {e}")
             
-                with st.form("clear_remark_form"):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
-                    with col2:
-                        st.write("") # Spacing
-                        st.write("")
-                        if st.form_submit_button("Acknowledge & Clear"):
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
-                            conn.commit()
-                            st.success("Remark cleared from dashboard!")
-                            st.rerun()
         conn.close()
     
         st.divider()
         
+        # Rebuilding the tabs
         tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
             st.subheader("Current System Users")
+            # ... (keep your existing code for tab1 perfectly intact below this line)
             conn = sqlite3.connect('registry_database.db')
             users_df = pd.read_sql_query("SELECT user_id, name, role, category_level FROM Users", conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
