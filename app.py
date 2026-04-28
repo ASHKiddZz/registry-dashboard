@@ -892,7 +892,8 @@ else:
         st.title("🎓 Head of Department Dashboard")
         st.write("Oversee departmental module allocations and review staff promotion requests.")
         
-        tab1, tab2 = st.tabs(["Department Allocations", "Staff Promotions"])
+        # Make sure your tab variables match this list!
+        tab1, tab2, tab3 = st.tabs(["Overview", "Promotion Approvals", "Department Analytics"])
         
         # --- TAB 1: ALLOCATIONS OVERVIEW ---
         with tab1:
@@ -994,6 +995,49 @@ else:
                 st.error(f"Error loading promotions: {e}")
             conn.close()
 
+        # --- TAB 3: DEPARTMENT ANALYTICS ---
+        with tab3:
+            st.subheader("📈 Department Workload & Analytics")
+            conn = sqlite3.connect('registry_database.db')
+            
+            try:
+                # 1. High-Level Metrics
+                col1, col2 = st.columns(2)
+                
+                # Count total teaching staff and active tickets waiting for the HoD
+                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM Users WHERE category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')", conn).iloc[0,0]
+                pending_hod = pd.read_sql_query("SELECT COUNT(*) FROM Pending_Promotions WHERE status = 'Pending HoD'", conn).iloc[0,0]
+                
+                col1.metric("Total Teaching Staff", total_staff)
+                col2.metric("Pending HoD Reviews", pending_hod)
+                
+                st.divider()
+                
+                # 2. Workload Distribution Chart
+                st.write("### Staff Teaching Load Distribution")
+                
+                # Query to count how many modules each specific lecturer is assigned to
+                workload_df = pd.read_sql_query("""
+                    SELECT u.name as "Staff Member", COUNT(a.module_id) as "Module Count"
+                    FROM Users u
+                    LEFT JOIN Allocations a ON u.user_id = a.user_id
+                    WHERE u.category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')
+                    GROUP BY u.user_id
+                    ORDER BY "Module Count" DESC
+                """, conn)
+                
+                if not workload_df.empty:
+                    # Setting the index tells Streamlit to use the names on the X-axis of the chart
+                    workload_df.set_index('Staff Member', inplace=True)
+                    st.bar_chart(workload_df)
+                else:
+                    st.info("No workload data available to chart.")
+                    
+            except Exception as e:
+                st.error(f"Error loading analytics: {e}")
+                
+            conn.close()
+
     # --- TABBED HOS VIEW ---
     def hos_dashboard():
         st.title("🏛️ Head of School Dashboard")
@@ -1030,80 +1074,96 @@ else:
                         with col2:
                             action = st.radio("Final Decision", ["Approve & Apply Promotion", "Reject"], horizontal=True)
                             
-                        if st.form_submit_button("Submit Final Decision", use_container_width=True):
-                            cursor = conn.cursor()
+                        # --- THE NEW FEEDBACK BOX ---
+                        rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
                             
-                            if "Approve" in action:
-                                # 1. Grab the exact details of the requested promotion
-                                cursor.execute("SELECT user_id, proposed_role, proposed_category FROM Pending_Promotions WHERE ticket_id = ?", (selected_ticket,))
-                                ticket_data = cursor.fetchone()
-                                target_user_id = ticket_data[0]
-                                new_role = ticket_data[1]
-                                new_category = ticket_data[2]
-                                
-                                # 2. THE MAGIC: Actually update the user's official profile in the database!
-                                cursor.execute("UPDATE Users SET role = ?, category_level = ? WHERE user_id = ?", (new_role, new_category, target_user_id))
-                                
-                                # 3. Mark the ticket as officially completed
-                                cursor.execute("UPDATE Pending_Promotions SET status = 'Approved' WHERE ticket_id = ?", (selected_ticket,))
-                                st.success(f"Promotion Approved! The applicant's official role has been updated to {new_role}.")
+                        if st.form_submit_button("Submit Final Decision", use_container_width=True):
+                            # Safety catch: prevent blank rejections
+                            if "Reject" in action and not rejection_reason.strip():
+                                st.error("You must provide a rejection reason for the applicant.")
                             else:
-                                # Mark the ticket as rejected
-                                cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected' WHERE ticket_id = ?", (selected_ticket,))
-                                st.warning(f"Ticket #{selected_ticket} has been Rejected.")
+                                cursor = conn.cursor()
                                 
-                            conn.commit()
-                            st.rerun()
+                                if "Approve" in action:
+                                    # 1. Grab the exact details of the requested promotion
+                                    cursor.execute("SELECT user_id, proposed_role, proposed_category FROM Pending_Promotions WHERE ticket_id = ?", (selected_ticket,))
+                                    ticket_data = cursor.fetchone()
+                                    target_user_id = ticket_data[0]
+                                    new_role = ticket_data[1]
+                                    new_category = ticket_data[2]
+                                    
+                                    # 2. THE MAGIC: Actually update the user's official profile in the database!
+                                    cursor.execute("UPDATE Users SET role = ?, category_level = ? WHERE user_id = ?", (new_role, new_category, target_user_id))
+                                    
+                                    # 3. Mark the ticket as officially completed (and clear reason)
+                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Approved', rejection_reason = '' WHERE ticket_id = ?", (selected_ticket,))
+                                    st.success(f"Promotion Approved! The applicant's official role has been updated to {new_role}.")
+                                else:
+                                    # Mark the ticket as rejected and save reason
+                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected', rejection_reason = ? WHERE ticket_id = ?", (rejection_reason, selected_ticket))
+                                    st.warning(f"Ticket #{selected_ticket} has been Rejected.")
+                                    
+                                conn.commit()
+                                st.rerun()
             except Exception as e:
                 st.error(f"Error loading promotions: {e}")
             conn.close()
 
-        # --- TAB 2: SCHOOL OVERVIEW ---
+        # --- TAB 2: SCHOOL OVERVIEW (VISUAL ANALYTICS) ---
         with tab2:
-            st.subheader("School-Wide Staff Metrics")
+            st.subheader("📊 School Analytics & Demographics")
             conn = sqlite3.connect('registry_database.db')
+            
             try:
-                # A quick group-by query to show the HoS how many staff they have in each role
-                users_df = pd.read_sql_query("SELECT role as 'Staff Role', COUNT(user_id) as 'Total Count' FROM Users GROUP BY role", conn)
+                # 1. High-Level Metrics (Top Row)
+                col1, col2, col3 = st.columns(3)
                 
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.dataframe(users_df, use_container_width=True, hide_index=True)
-                with col2:
-                    # Add a quick metric for total modules across the whole school
-                    total_mods = pd.read_sql_query("SELECT COUNT(*) FROM Modules", conn).iloc[0,0]
-                    st.metric("Total Modules Run by School", total_mods)
-                    
-                    # Metric for total staff
-                    total_staff = users_df['Total Count'].sum()
-                    st.metric("Total School Staff", total_staff)
+                # Fetching live counts from the database
+                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM Users WHERE role != 'Registry Officer'", conn).iloc[0,0]
+                total_modules = pd.read_sql_query("SELECT COUNT(*) FROM Modules", conn).iloc[0,0]
+                pending_promos = pd.read_sql_query("SELECT COUNT(*) FROM Pending_Promotions WHERE status = 'Pending HoS'", conn).iloc[0,0]
+                
+                col1.metric("Total Academic Staff", total_staff)
+                col2.metric("Total Active Modules", total_modules)
+                col3.metric("Pending Final Approvals", pending_promos)
+                
+                st.divider()
+                
+                # 2. Visual Charts (Middle Row)
+                st.write("### Staff Distribution by Role")
+                
+                # Query to group staff by role
+                role_df = pd.read_sql_query("""
+                    SELECT role, COUNT(user_id) as Count 
+                    FROM Users 
+                    WHERE role != 'Registry Officer' 
+                    GROUP BY role
+                """, conn)
+                
+                # Setting the index allows Streamlit to automatically label the X-axis
+                if not role_df.empty:
+                    role_df.set_index('role', inplace=True)
+                    st.bar_chart(role_df)
+                else:
+                    st.info("No staff data available to chart.")
+                
+                st.divider()
+                
+                # 3. Detailed Breakdown Table (Bottom Row)
+                st.write("### Department Workload Breakdown")
+                workload_df = pd.read_sql_query("""
+                    SELECT u.name as "Staff Name", u.role as "Role", COUNT(a.module_id) as "Assigned Modules"
+                    FROM Users u
+                    LEFT JOIN Allocations a ON u.user_id = a.user_id
+                    WHERE u.role != 'Registry Officer'
+                    GROUP BY u.user_id
+                    ORDER BY "Assigned Modules" DESC
+                """, conn)
+                
+                st.dataframe(workload_df, use_container_width=True, hide_index=True)
+                
             except Exception as e:
-                st.error(f"Error loading overview: {e}")
+                st.error(f"Error loading analytics: {e}")
+                
             conn.close()
-
-# ==========================================
-#      THE TRAFFIC COP (ROLE-BASED ROUTING)
-# ==========================================
-
-# 1. Diagnostic Line (Helps us see if there's a typo in the role name)
-if 'user_role' in st.session_state:
-    st.sidebar.write(f"Logged in as: **{st.session_state.user_role}**")
-
-    # 2. The Routing Logic
-    if st.session_state.user_role == "Registry Officer":
-        registry_dashboard()
-        
-    elif st.session_state.user_role == "HoD":
-        hod_dashboard()
-        
-    elif st.session_state.user_role == "HoS":
-        hos_dashboard()
-        
-    elif st.session_state.user_role in ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor"]:
-        lecturer_dashboard()
-        
-    else:
-        st.error("Access Denied: Your role is not recognized by the system.")
-else:
-    st.warning("Please log in to access the dashboard.")
 
