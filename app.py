@@ -805,8 +805,8 @@ else:
 
         st.divider()
 
-        # 3. Application History Tracker (Show ALL past and present tickets)
-        st.write("### Application History")
+        # 3. Application History Tracker (Clean UI Version)
+        st.write("### Application Status")
         cursor.execute("""
             SELECT ticket_id, proposed_role, proposed_category, status, rejection_reason 
             FROM Pending_Promotions 
@@ -819,28 +819,41 @@ else:
         if not my_requests:
             st.write("No prior applications found on your record.")
         else:
-            # Loop through every request to build a permanent history log
-            for req in my_requests:
-                t_id, p_role, p_cat, status, rej_reason = req
-                
-                with st.container(border=True):
-                    st.markdown(f"**Ticket #{t_id} | Requested Promotion:** {p_role} *( {p_cat} )*")
-                    
-                    if status == 'Pending Registry':
-                        st.info("📋 **Current Status:** Awaiting Registry Verification")
-                        st.progress(25)
-                    elif status == 'Pending HoD':
-                        st.warning("⏳ **Current Status:** Awaiting Department Head (HoD) Review")
-                        st.progress(50)
-                    elif status == 'Pending HoS':
-                        st.info("🔍 **Current Status:** Awaiting Final Head of School (HoS) Approval")
-                        st.progress(75)
-                    elif status == 'Approved':
-                        st.success("🎉 **Status:** Approved! Your official title has been updated.")
-                        st.progress(100)
-                    elif status == 'Rejected':
-                        st.error("❌ **Status:** Rejected.")
-                        st.write(f"**Official Feedback:** {rej_reason}")
+            # Sort the tickets into two separate lists
+            active_reqs = [req for req in my_requests if req[3] not in ('Approved', 'Rejected')]
+            past_reqs = [req for req in my_requests if req[3] in ('Approved', 'Rejected')]
+            
+            # --- PROMINENT DISPLAY: Active Tickets ---
+            if active_reqs:
+                for req in active_reqs:
+                    t_id, p_role, p_cat, status, rej_reason = req
+                    with st.container(border=True):
+                        st.markdown(f"**Ticket #{t_id} | Active Request:** {p_role} *( {p_cat} )*")
+                        
+                        if status == 'Pending Registry':
+                            st.info("📋 **Current Status:** Awaiting Registry Verification")
+                            st.progress(25)
+                        elif status == 'Pending HoD':
+                            st.warning("⏳ **Current Status:** Awaiting Department Head (HoD) Review")
+                            st.progress(50)
+                        elif status == 'Pending HoS':
+                            st.info("🔍 **Current Status:** Awaiting Final Head of School (HoS) Approval")
+                            st.progress(75)
+                            
+            # --- HIDDEN DISPLAY: The Archive Expander ---
+            if past_reqs:
+                # expanded=False ensures this stays closed and out of the way until clicked
+                with st.expander("📂 View Past Applications & Official Feedback", expanded=False):
+                    for req in past_reqs:
+                        t_id, p_role, p_cat, status, rej_reason = req
+                        with st.container(border=True):
+                            st.markdown(f"**Ticket #{t_id} | Requested:** {p_role} *( {p_cat} )*")
+                            
+                            if status == 'Approved':
+                                st.success("🎉 **Status:** Approved! Official title was updated.")
+                            elif status == 'Rejected':
+                                st.error("❌ **Status:** Rejected.")
+                                st.write(f"**Official Feedback:** {rej_reason}")
 
         st.divider()
 
