@@ -574,25 +574,37 @@ else:
 
             # --- PART 3: MANAGE ALLOCATIONS ---
             st.markdown("### Manual Assignment Control")
+            
+            # --- NEW: Memory for Staff Selection ---
+            if 'saved_staff_index' not in st.session_state:
+                st.session_state.saved_staff_index = 0
+                
             col1, col2 = st.columns(2)
             
             # --- Left Side: Assign ---
             with col1:
                 st.write("**Assign a Module to Staff**")
-                with st.form("assign_form", clear_on_submit=True):
+                
+                # REMOVED clear_on_submit=True to stop it from wiping our selection!
+                with st.form("assign_form"):
                     staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')", conn)
                     
-                    # NEW: Check if the staff list is empty first
                     if staff_df.empty:
                         st.warning("⚠️ No teaching staff found. Please register a Lecturer in the Manage Users tab first.")
                         st.form_submit_button("Assign Module", disabled=True)
                     else:
-                        staff_list = staff_df['user_id'].astype(str) + " - " + staff_df['name']
-                        selected_staff = st.selectbox("Select Staff Member", staff_list)
+                        # Convert to a standard Python list so we can easily find the index
+                        staff_list = (staff_df['user_id'].astype(str) + " - " + staff_df['name']).tolist()
+                        
+                        # Safety check: Prevent errors if a user was recently deleted and the list got shorter
+                        if st.session_state.saved_staff_index >= len(staff_list):
+                            st.session_state.saved_staff_index = 0
+                            
+                        # Set the index to our saved memory!
+                        selected_staff = st.selectbox("Select Staff Member", staff_list, index=st.session_state.saved_staff_index)
                         
                         mod_df = pd.read_sql_query("SELECT module_id, module_name FROM Modules", conn)
                         
-                        # NEW: Check if the modules list is empty first
                         if mod_df.empty:
                             st.warning("⚠️ No modules found. Please add modules first.")
                             st.form_submit_button("Assign Module", disabled=True)
@@ -605,6 +617,9 @@ else:
                             submit_assign = st.form_submit_button("Assign Module")
                             
                             if submit_assign:
+                                # SAVE the current staff selection index before reloading the page!
+                                st.session_state.saved_staff_index = staff_list.index(selected_staff)
+                                
                                 s_id = int(selected_staff.split(" - ")[0])
                                 m_id = selected_mod.split(" - ")[0]
                                 
