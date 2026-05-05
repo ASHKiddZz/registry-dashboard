@@ -104,6 +104,15 @@ patch_conn.execute('''
 patch_conn.commit()
 patch_conn.close()
 
+# Silent DB Upgrade 4: Multi-Semester Tracking for Allocations
+patch_conn = sqlite3.connect('registry_database.db')
+try:
+    patch_conn.execute("ALTER TABLE Allocations ADD COLUMN semester TEXT DEFAULT 'Semester 1'")
+    patch_conn.commit()
+except sqlite3.OperationalError:
+    pass # The column already exists, do nothing!
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
@@ -512,19 +521,24 @@ else:
             st.subheader("Workload & Allocations Overview")
             conn = sqlite3.connect('registry_database.db')
             
+            # --- GLOBAL SEMESTER FILTER ---
+            # This allows the Admin to flip the entire dashboard between Semester 1 and Semester 2
+            selected_semester = st.radio("⏳ Select Active Semester to View:", ["Semester 1", "Semester 2"], horizontal=True)
+            st.divider()
+            
             # --- PART 1: THE SMART WORKLOAD MATH ---
-            st.markdown("### Lecturer Workload Analysis")
+            st.markdown(f"### Lecturer Workload Analysis ({selected_semester})")
             st.info("💡 Lecturers exceeding their category limit are highlighted automatically.")
             
-            # The workload math counts EACH cohort as a separate workload assignment
+            # The math now filters strictly by the selected semester!
             workload_query = """
                 SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
                 FROM Users u
-                LEFT JOIN Allocations a ON u.user_id = a.user_id
+                LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
                 WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
                 GROUP BY u.user_id, u.name, u.category_level
             """
-            workload_df = pd.read_sql_query(workload_query, conn)
+            workload_df = pd.read_sql_query(workload_query, conn, params=(selected_semester,))
             
             def get_category_limit(category):
                 if pd.isna(category): return 99 
@@ -549,17 +563,17 @@ else:
             st.divider()
             
             # --- PART 2: THE DETAILED MASTER LIST ---
-            st.markdown("### Detailed Master List")
+            st.markdown(f"### Detailed Master List ({selected_semester})")
             
-            # NEW: We now select the 'cohort' column to display in the table
             all_data = pd.read_sql_query("""
-                SELECT u.name as "Lecturer", a.module_id as "Module Code", m.module_name as "Module Title", a.cohort as "Cohort/Group"
+                SELECT u.name as "Lecturer", a.module_id as "Module Code", m.module_name as "Module Title", a.cohort as "Cohort/Group", a.semester as "Semester"
                 FROM Allocations a
                 JOIN Users u ON a.user_id = u.user_id
                 JOIN Modules m ON a.module_id = m.module_id
-            """, conn)
+                WHERE a.semester = ?
+            """, conn, params=(selected_semester,))
             
-            lecturer_options = ["All Lecturers"] + sorted(all_data['Lecturer'].unique().tolist())
+            lecturer_options = ["All Lecturers"] + sorted(all_data['Lecturer'].unique().tolist()) if not all_data.empty else ["All Lecturers"]
             selected_filter = st.selectbox("🔍 Search / Filter by Lecturer", lecturer_options)
             
             if selected_filter != "All Lecturers":
@@ -567,7 +581,7 @@ else:
             else:
                 display_data = all_data
                 
-            st.caption(f"Showing **{len(display_data)}** assigned module(s).")
+            st.caption(f"Showing **{len(display_data)}** assigned module(s) for {selected_semester}.")
             st.dataframe(display_data, use_container_width=True, hide_index=True)
             
             st.divider()
@@ -575,7 +589,6 @@ else:
             # --- PART 3: MANAGE ALLOCATIONS ---
             st.markdown("### Manual Assignment Control")
             
-            # --- NEW: Memory for Staff Selection ---
             if 'saved_staff_index' not in st.session_state:
                 st.session_state.saved_staff_index = 0
                 
@@ -585,82 +598,78 @@ else:
             with col1:
                 st.write("**Assign a Module to Staff**")
                 
-                # REMOVED clear_on_submit=True to stop it from wiping our selection!
                 with st.form("assign_form"):
                     staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')", conn)
                     
                     if staff_df.empty:
-                        st.warning("⚠️ No teaching staff found. Please register a Lecturer in the Manage Users tab first.")
+                        st.warning("⚠️ No teaching staff found.")
                         st.form_submit_button("Assign Module", disabled=True)
                     else:
-                        # Convert to a standard Python list so we can easily find the index
                         staff_list = (staff_df['user_id'].astype(str) + " - " + staff_df['name']).tolist()
                         
-                        # Safety check: Prevent errors if a user was recently deleted and the list got shorter
                         if st.session_state.saved_staff_index >= len(staff_list):
                             st.session_state.saved_staff_index = 0
                             
-                        # Set the index to our saved memory!
                         selected_staff = st.selectbox("Select Staff Member", staff_list, index=st.session_state.saved_staff_index)
-                        
                         mod_df = pd.read_sql_query("SELECT module_id, module_name FROM Modules", conn)
                         
                         if mod_df.empty:
-                            st.warning("⚠️ No modules found. Please add modules first.")
+                            st.warning("⚠️ No modules found.")
                             st.form_submit_button("Assign Module", disabled=True)
                         else:
                             mod_list = mod_df['module_id'].astype(str) + " - " + mod_df['module_name']
                             selected_mod = st.selectbox("Select Module", mod_list)
                             
-                            assign_cohort = st.text_input("Cohort / Group", value="Group A", help="e.g., Group A, Group B, PT1, etc.")
+                            # --- NEW: Semester Selection ---
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                assign_semester = st.selectbox("Target Semester", ["Semester 1", "Semester 2"], index=0 if selected_semester == "Semester 1" else 1)
+                            with col_b:
+                                assign_cohort = st.text_input("Cohort / Group", value="Group A")
                             
-                            submit_assign = st.form_submit_button("Assign Module")
+                            submit_assign = st.form_submit_button("Assign Module", use_container_width=True)
                             
                             if submit_assign:
-                                # SAVE the current staff selection index before reloading the page!
                                 st.session_state.saved_staff_index = staff_list.index(selected_staff)
-                                
                                 s_id = int(selected_staff.split(" - ")[0])
                                 m_id = selected_mod.split(" - ")[0]
                                 
                                 cursor = conn.cursor()
-                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=?", (s_id, m_id, assign_cohort))
+                                # Check if they are already teaching this exact cohort in this exact semester
+                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (s_id, m_id, assign_cohort, assign_semester))
                                 if cursor.fetchone():
-                                    st.error(f"This person is already teaching {m_id} for {assign_cohort}!")
+                                    st.error(f"This person is already teaching {m_id} for {assign_cohort} in {assign_semester}!")
                                 else:
-                                    cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort) VALUES (?, ?, ?)", (s_id, m_id, assign_cohort))
+                                    # Insert the new record with the correct semester
+                                    cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort, semester) VALUES (?, ?, ?, ?)", (s_id, m_id, assign_cohort, assign_semester))
                                     conn.commit()
-                                    st.success(f"Assigned {assign_cohort} successfully!")
+                                    st.success(f"Assigned {m_id} ({assign_cohort}) to {assign_semester} successfully!")
                                     st.rerun()
 
             # --- Right Side: Remove ---
             with col2:
                 st.write("**Remove an Allocation**")
                 with st.form("remove_form"):
-                    # NEW: Include the cohort in the removal query
                     alloc_df = pd.read_sql_query("""
-                        SELECT a.user_id, u.name, a.module_id, m.module_name, a.cohort
+                        SELECT a.user_id, u.name, a.module_id, m.module_name, a.cohort, a.semester
                         FROM Allocations a
                         JOIN Users u ON a.user_id = u.user_id
                         JOIN Modules m ON a.module_id = m.module_id
                     """, conn)
                     
                     if not alloc_df.empty:
-                        # NEW: The string now shows the cohort so the admin knows exactly which one to delete
-                        alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_id'] + "|" + alloc_df['cohort'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['cohort'] + ")"
+                        # Include the semester in the dropdown string so you know exactly what you are deleting
+                        alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_id'] + "|" + alloc_df['cohort'] + "|" + alloc_df['semester'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['cohort'] + ", " + alloc_df['semester'] + ")"
                         selected_alloc = st.selectbox("Select Assignment to Remove", alloc_list)
                         
-                        submit_remove = st.form_submit_button("Remove Allocation", type="primary")
+                        submit_remove = st.form_submit_button("Remove Allocation", type="primary", use_container_width=True)
                         
                         if submit_remove:
                             keys = selected_alloc.split(" : ")[0].split("|")
-                            r_uid = int(keys[0])
-                            r_mid = keys[1]
-                            r_cohort = keys[2] # Extract the cohort text
+                            r_uid, r_mid, r_cohort, r_semester = int(keys[0]), keys[1], keys[2], keys[3]
                             
                             cursor = conn.cursor()
-                            # Delete the exact cohort match
-                            cursor.execute("DELETE FROM Allocations WHERE user_id=? AND module_id=? AND cohort=?", (r_uid, r_mid, r_cohort))
+                            cursor.execute("DELETE FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (r_uid, r_mid, r_cohort, r_semester))
                             conn.commit()
                             st.success("Allocation removed successfully!")
                             st.rerun()
