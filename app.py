@@ -113,6 +113,33 @@ except sqlite3.OperationalError:
     pass # The column already exists, do nothing!
 patch_conn.close()
 
+# Silent DB Upgrade 5: Adding UTM Enterprise Data Columns
+patch_conn = sqlite3.connect('registry_database.db')
+new_columns = [
+    # Expanding the Users Table
+    ("Users", "employment_type", "TEXT DEFAULT 'FT'"),
+    ("Users", "department", "TEXT DEFAULT 'Unassigned'"),
+    ("Users", "title", "TEXT DEFAULT ''"),
+    
+    # Expanding the Modules Table
+    ("Modules", "programme", "TEXT DEFAULT 'General'"),
+    ("Modules", "weightage", "REAL DEFAULT 0"),
+    ("Modules", "programme_coordinator", "TEXT DEFAULT 'Unassigned'"),
+    
+    # Expanding the Allocations Table
+    ("Allocations", "level_semester", "TEXT DEFAULT ''"),
+    ("Allocations", "students_count", "INTEGER DEFAULT 0")
+]
+
+for table, col, dtype in new_columns:
+    try:
+        patch_conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dtype}")
+    except sqlite3.OperationalError:
+        pass # The column already exists, safely skip it!
+
+patch_conn.commit()
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
