@@ -704,6 +704,131 @@ else:
                         st.info("There are no allocations to remove.")
                         st.form_submit_button("Remove Allocation", disabled=True)
 
+                        # --- PART 4: ENTERPRISE TIMETABLE IMPORTER (DUAL FORMAT) ---
+            st.divider()
+            st.markdown("### 📥 Bulk Import Timetable (Allocations & Enrichment)")
+            st.info("Upload the timetable. The system will auto-assign modules AND enrich staff/module profiles with FT/PT, Weightage, and Student Counts.")
+            
+            format_choice = st.radio("Select Excel File Format:", ["UTM Official Format (Skips 7 rows)", "Standard Clean Format"], horizontal=True)
+            
+            uploaded_tt = st.file_uploader("Choose a Timetable Excel file", type=["xlsx", "xls"], key="tt_upload")
+            
+            if uploaded_tt is not None:
+                try:
+                    if "UTM" in format_choice:
+                        tt_df = pd.read_excel(uploaded_tt, header=7)
+                        # Exact UTM Column Mappings
+                        col_resource = 'Resource Person\nSURNAME Name (Title)'
+                        col_module = 'Module Code'
+                        col_mod_title = 'Module Title'
+                        col_cohort = 'Cohort'
+                        col_level = 'Level Sem\ne.g L1S2'
+                        col_dept = 'Dept'
+                        col_prog = 'Programme'
+                        col_students = 'No. of Students'
+                        col_coord = 'PROGRAMME COORDINATOR'
+                        col_weight = 'Weightage'
+                        col_ftpt = 'FT/PT'
+                    else:
+                        tt_df = pd.read_excel(uploaded_tt)
+                        # Clean Format Mappings
+                        col_resource = 'Resource person Name'
+                        col_module = 'Module Code'
+                        col_mod_title = 'Module Name'
+                        col_cohort = 'Cohort'
+                        col_level = 'Semester'
+                        col_dept = 'Department'
+                        col_prog = 'Programme'
+                        col_students = 'Students'
+                        col_coord = 'Coordinator'
+                        col_weight = 'Weightage'
+                        col_ftpt = 'FT/PT'
+                        
+                    st.write("File Preview:")
+                    st.dataframe(tt_df.head(), use_container_width=True)
+                    
+                    required_cols = [col_resource, col_module, col_level]
+                    missing_cols = [col for col in required_cols if col not in tt_df.columns]
+                    
+                    if missing_cols:
+                        st.error(f"⚠️ Your Excel file is missing these required core columns: {', '.join(missing_cols)}")
+                    else:
+                        if st.button("Run Enterprise Bulk Import", type="primary", use_container_width=True):
+                            cursor = conn.cursor()
+                            alloc_count = 0
+                            missing_staff = set()
+                            
+                            for index, row in tt_df.iterrows():
+                                raw_name = str(row[col_resource]).strip()
+                                if raw_name == 'nan' or raw_name == '' or pd.isna(row[col_resource]):
+                                    continue
+                                
+                                # 1. Extract Title and Clean Name
+                                title = ""
+                                staff_name = raw_name
+                                if "(" in raw_name and ")" in raw_name:
+                                    title = raw_name.split("(")[1].split(")")[0].strip() # Extracts 'Mr', 'Dr', etc.
+                                    staff_name = raw_name.split("(")[0].strip()
+                                
+                                # 2. Safely Extract New Enterprise Data (Using .get() so it doesn't crash if a standard file lacks them)
+                                mod_code = str(row[col_module]).strip()
+                                mod_title = str(row.get(col_mod_title, 'Unknown')).strip()
+                                cohort = str(row.get(col_cohort, 'Group A')).strip() 
+                                dept = str(row.get(col_dept, 'Unassigned')).strip()
+                                prog = str(row.get(col_prog, 'General')).strip()
+                                coord = str(row.get(col_coord, 'Unassigned')).strip()
+                                ftpt = str(row.get(col_ftpt, 'FT')).strip()
+                                
+                                # Safely convert numbers
+                                try: weight = float(row.get(col_weight, 0))
+                                except: weight = 0.0
+                                
+                                try: students = int(row.get(col_students, 0))
+                                except: students = 0
+                                
+                                # 3. Smart Semester Detection
+                                level_sem = str(row[col_level]).upper()
+                                if "UTM" in format_choice:
+                                    semester = "Semester 2" if 'S2' in level_sem else "Semester 1"
+                                else:
+                                    semester = str(row[col_level]).strip()
+                                
+                                # --- DATABASE UPDATES ---
+                                
+                                # Step A: Enrich Module Data (Insert if missing, Update if exists)
+                                cursor.execute("SELECT module_id FROM Modules WHERE module_id=?", (mod_code,))
+                                if cursor.fetchone():
+                                    cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (prog, weight, coord, mod_code))
+                                else:
+                                    cursor.execute("INSERT INTO Modules (module_id, module_name, programme, weightage, programme_coordinator) VALUES (?, ?, ?, ?, ?)", (mod_code, mod_title, prog, weight, coord))
+
+                                # Step B: Match User and Enrich Profile
+                                cursor.execute("SELECT user_id FROM Users WHERE name LIKE ?", (f"%{staff_name}%",))
+                                user_result = cursor.fetchone()
+                                
+                                if user_result:
+                                    s_id = user_result[0]
+                                    
+                                    # Update the lecturer's profile with their true department and FT/PT status!
+                                    cursor.execute("UPDATE Users SET department=?, title=?, employment_type=? WHERE user_id=?", (dept, title, ftpt, s_id))
+                                    
+                                    # Step C: Log the Allocation with Student Counts
+                                    cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (s_id, mod_code, cohort, semester))
+                                    if not cursor.fetchone():
+                                        cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort, semester, level_semester, students_count) VALUES (?, ?, ?, ?, ?, ?)", (s_id, mod_code, cohort, semester, level_sem, students))
+                                        alloc_count += 1
+                                else:
+                                    missing_staff.add(staff_name)
+                                            
+                            conn.commit()
+                            st.success(f"🎉 Success! Imported {alloc_count} new allocations and enriched system database with UTM data!")
+                            
+                            if missing_staff:
+                                st.warning(f"⚠️ Could not auto-match these names to the database: {', '.join(missing_staff)}. Please ensure they are registered in Tab 1.")
+                                
+                except Exception as e:
+                    st.error(f"Error processing timetable: {e}")
+
             conn.close()
 
         # ==========================================
