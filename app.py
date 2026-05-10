@@ -1062,12 +1062,57 @@ else:
                     
         st.divider()
 
-        # --- SECTION: Module List ---
-        st.subheader("📚 Assigned Modules")
-        if not my_modules.empty:
-            st.dataframe(my_modules, use_container_width=True, hide_index=True)
+        # --- SECTION: ENTERPRISE WORKLOAD & HISTORICAL LOG ---
+        st.subheader("📚 My Teaching Workload")
+        
+        cursor = conn.cursor()
+        
+        # Fetch all allocations with the new Enterprise metrics
+        my_modules_query = """
+            SELECT a.semester as "Semester", a.module_id as "Module Code", m.module_name as "Module Title", 
+                   a.cohort as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
+            FROM Allocations a
+            JOIN Modules m ON a.module_id = m.module_id
+            WHERE a.user_id = ?
+            ORDER BY a.semester DESC
+        """
+        my_modules_df = pd.read_sql_query(my_modules_query, conn, params=(st.session_state.user_id,))
+        
+        if my_modules_df.empty:
+            st.info("You currently have no modules assigned to you for any semester.")
+            workload_count = 0  # Fallback for the promotion logic
         else:
-            st.info("No modules assigned for this semester yet.")
+            # Let the Lecturer toggle which semester is "Active" right now
+            col_sem, _ = st.columns([1, 2])
+            with col_sem:
+                active_semester = st.selectbox("Select Active Semester:", ["Semester 1", "Semester 2"])
+            
+            # Split the data based on their selection
+            active_df = my_modules_df[my_modules_df['Semester'] == active_semester]
+            past_df = my_modules_df[my_modules_df['Semester'] != active_semester]
+            
+            # 1. THE ACTIVE WORKLOAD
+            st.markdown(f"**Current Workload ({active_semester})**")
+            if not active_df.empty:
+                st.dataframe(active_df.drop(columns=['Semester']), use_container_width=True, hide_index=True)
+                
+                # Calculate live metrics
+                workload_count = len(active_df)  # This feeds into your promotion logic!
+                total_students = active_df['Students'].sum()
+                total_weight = active_df['Weightage'].sum()
+                
+                st.caption(f"📊 **{active_semester} Totals:** {workload_count} Modules | {total_students} Students | {total_weight} Total Weightage")
+            else:
+                st.info(f"No modules assigned for {active_semester}.")
+                workload_count = 0
+                
+            # 2. THE SUPERVISOR'S HISTORICAL LOG
+            if not past_df.empty:
+                with st.expander("📂 View Previous Semester Historical Log"):
+                    st.info("This is a permanent record of your past teaching allocations.")
+                    st.dataframe(past_df, use_container_width=True, hide_index=True)
+            
+        st.divider()
 
         conn.close()
         
