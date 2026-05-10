@@ -1124,51 +1124,80 @@ else:
         # Make sure your tab variables match this list!
         tab1, tab2, tab3 = st.tabs(["Overview", "Promotion Approvals", "Department Analytics"])
         
-        # --- TAB 1: ALLOCATIONS OVERVIEW ---
+        # --- TAB 1: ALLOCATIONS OVERVIEW & METRICS ---
         with tab1:
-            st.subheader("Current Module Allocations")
+            st.subheader("Department Workload & Metrics")
             conn = sqlite3.connect('registry_database.db')
             try:
+                # --- 1. GLOBAL SEMESTER FILTER ---
+                selected_semester = st.radio("⏳ Select Semester to Analyze:", ["Semester 1", "Semester 2"], horizontal=True, key="hod_sem")
+                st.divider()
+
+                # --- 2. ENTERPRISE METRICS ---
+                # Calculate high-level stats for the selected semester
+                staff_count = conn.execute("SELECT COUNT(*) FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')").fetchone()[0]
+                
+                sem_stats = conn.execute("""
+                    SELECT COUNT(a.module_id), SUM(a.students_count), SUM(m.weightage)
+                    FROM Allocations a
+                    JOIN Modules m ON a.module_id = m.module_id
+                    WHERE a.semester = ?
+                """, (selected_semester,)).fetchone()
+                
+                mod_count = sem_stats[0] if sem_stats[0] else 0
+                student_count = sem_stats[1] if sem_stats[1] else 0
+                total_weight = sem_stats[2] if sem_stats[2] else 0
+                
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Teaching Staff", staff_count)
+                m2.metric("Assigned Modules", mod_count)
+                m3.metric("Total Students", student_count)
+                m4.metric("Total Weightage", total_weight)
+                
+                st.divider()
+
+                # --- 3. YOUR DUAL-FILTER SYSTEM (UPGRADED) ---
+                st.write(f"### Detailed Allocations ({selected_semester})")
+                
+                # Upgraded SQL: Now pulls the new UTM data but filters by the radio button!
                 alloc_df = pd.read_sql_query("""
-                    SELECT u.name as "Lecturer", a.module_id as "Module Code", m.module_name as "Module Title"
+                    SELECT u.name as "Lecturer", u.employment_type as "FT/PT", 
+                           a.module_id as "Module Code", m.module_name as "Module Title", 
+                           a.cohort as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
                     FROM Allocations a
                     JOIN Users u ON a.user_id = u.user_id
                     JOIN Modules m ON a.module_id = m.module_id
-                """, conn)
+                    WHERE a.semester = ?
+                """, conn, params=(selected_semester,))
                 
-                # --- THE NEW DUAL-FILTER SYSTEM ---
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    lecturer_list = ["All Lecturers"] + sorted(alloc_df["Lecturer"].unique().tolist())
+                    lecturer_list = ["All Lecturers"] + sorted(alloc_df["Lecturer"].unique().tolist()) if not alloc_df.empty else ["All Lecturers"]
                     selected_lecturer = st.selectbox("👤 Filter by Lecturer", lecturer_list)
                     
                 with col2:
-                    module_list = ["All Modules"] + sorted(alloc_df["Module Code"].unique().tolist())
+                    module_list = ["All Modules"] + sorted(alloc_df["Module Code"].unique().tolist()) if not alloc_df.empty else ["All Modules"]
                     selected_module = st.selectbox("📚 Filter by Module Code", module_list)
                 
-                # Start with the full dataframe
                 display_df = alloc_df
                 
-                # Apply Lecturer filter if used
                 if selected_lecturer != "All Lecturers":
                     display_df = display_df[display_df["Lecturer"] == selected_lecturer]
                     
-                # Apply Module filter if used
                 if selected_module != "All Modules":
                     display_df = display_df[display_df["Module Code"] == selected_module]
                     
-                # --- DYNAMIC METRICS ---
-                # We add two metric boxes to show real-time stats based on the filters
-                met_col1, met_col2 = st.columns(2)
+                # Upgraded Dynamic Metrics: Now shows Student totals for the filtered view!
+                met_col1, met_col2, met_col3 = st.columns(3)
                 with met_col1:
-                    st.metric(label="Total Assigned Modules", value=len(display_df))
+                    st.metric(label="Showing Modules", value=len(display_df))
                 with met_col2:
                     st.metric(label="Unique Lecturers", value=display_df["Lecturer"].nunique())
+                with met_col3:
+                    st.metric(label="Filtered Students", value=int(display_df["Students"].sum()) if not display_df.empty else 0)
                 
-                # Display the final filtered table
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
-                # -----------------------------------
                 
             except Exception as e:
                 st.error(f"Error loading allocations: {e}")
@@ -1274,12 +1303,66 @@ else:
         
         tab1, tab2 = st.tabs(["Final Promotion Approvals", "School Overview"])
         
-        # --- TAB 1: FINAL PROMOTION APPROVALS ---
+        # --- TAB 1: EXECUTIVE OVERVIEW & PROMOTIONS ---
         with tab1:
-            st.subheader("Pending Final Approvals")
+            st.subheader("School Executive Overview")
             conn = sqlite3.connect('registry_database.db')
             try:
-                # Only pull tickets that have been forwarded by the HoD
+                # ==========================================
+                # SECTION A: THE NEW ENTERPRISE METRICS
+                # ==========================================
+                selected_semester = st.radio("⏳ Select Semester to Analyze:", ["Semester 1", "Semester 2"], horizontal=True, key="hos_sem")
+                st.divider()
+                
+                # School-Wide Metrics
+                dept_count = conn.execute("SELECT COUNT(DISTINCT department) FROM Users WHERE department != 'Unassigned'").fetchone()[0]
+                prog_count = conn.execute("SELECT COUNT(DISTINCT programme) FROM Modules WHERE programme != 'General'").fetchone()[0]
+                
+                school_stats = conn.execute("""
+                    SELECT COUNT(a.module_id), SUM(a.students_count)
+                    FROM Allocations a
+                    WHERE a.semester = ?
+                """, (selected_semester,)).fetchone()
+                
+                total_classes = school_stats[0] if school_stats[0] else 0
+                total_students = school_stats[1] if school_stats[1] else 0
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Active Departments", dept_count)
+                col2.metric("Active Programmes", prog_count)
+                col3.metric("Running Classes", total_classes)
+                col4.metric("Student Enrollments", total_students)
+                
+                st.divider()
+                
+                # Department Performance Table
+                st.write(f"### Department Performance ({selected_semester})")
+                dept_df = pd.read_sql_query("""
+                    SELECT 
+                        u.department as "Department",
+                        COUNT(DISTINCT u.user_id) as "Staff Count",
+                        COUNT(a.module_id) as "Modules Taught",
+                        SUM(a.students_count) as "Total Students",
+                        SUM(m.weightage) as "Total Weightage"
+                    FROM Users u
+                    LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
+                    LEFT JOIN Modules m ON a.module_id = m.module_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD')
+                    AND u.department != 'Unassigned'
+                    GROUP BY u.department
+                    ORDER BY "Total Students" DESC
+                """, conn, params=(selected_semester,))
+                
+                dept_df.fillna(0, inplace=True)
+                st.dataframe(dept_df, use_container_width=True, hide_index=True)
+                
+                st.divider()
+
+                # ==========================================
+                # SECTION B: YOUR FINAL PROMOTION APPROVALS
+                # ==========================================
+                st.subheader("Pending Final Approvals")
+                
                 promo_df = pd.read_sql_query("""
                     SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
                         p.proposed_role as "Requested Role", p.proposed_category as "Requested Category"
@@ -1303,39 +1386,33 @@ else:
                         with col2:
                             action = st.radio("Final Decision", ["Approve & Apply Promotion", "Reject"], horizontal=True)
                             
-                        # --- THE NEW FEEDBACK BOX ---
                         rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
                             
                         if st.form_submit_button("Submit Final Decision", use_container_width=True):
-                            # Safety catch: prevent blank rejections
                             if "Reject" in action and not rejection_reason.strip():
                                 st.error("You must provide a rejection reason for the applicant.")
                             else:
                                 cursor = conn.cursor()
                                 
                                 if "Approve" in action:
-                                    # 1. Grab the exact details of the requested promotion
                                     cursor.execute("SELECT user_id, proposed_role, proposed_category FROM Pending_Promotions WHERE ticket_id = ?", (selected_ticket,))
                                     ticket_data = cursor.fetchone()
                                     target_user_id = ticket_data[0]
                                     new_role = ticket_data[1]
                                     new_category = ticket_data[2]
                                     
-                                    # 2. THE MAGIC: Actually update the user's official profile in the database!
                                     cursor.execute("UPDATE Users SET role = ?, category_level = ? WHERE user_id = ?", (new_role, new_category, target_user_id))
-                                    
-                                    # 3. Mark the ticket as officially completed (and clear reason)
                                     cursor.execute("UPDATE Pending_Promotions SET status = 'Approved', rejection_reason = '' WHERE ticket_id = ?", (selected_ticket,))
                                     st.success(f"Promotion Approved! The applicant's official role has been updated to {new_role}.")
                                 else:
-                                    # Mark the ticket as rejected and save reason
                                     cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected', rejection_reason = ? WHERE ticket_id = ?", (rejection_reason, selected_ticket))
                                     st.warning(f"Ticket #{selected_ticket} has been Rejected.")
                                     
                                 conn.commit()
                                 st.rerun()
+
             except Exception as e:
-                st.error(f"Error loading promotions: {e}")
+                st.error(f"Error loading dashboard: {e}")
             conn.close()
 
         # --- TAB 2: SCHOOL OVERVIEW (VISUAL ANALYTICS) ---
