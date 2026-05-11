@@ -141,6 +141,15 @@ for table, col, dtype in new_columns:
 patch_conn.commit()
 patch_conn.close()
 
+# Silent DB Upgrade 6: PDF Registration Letters Storage
+patch_conn = sqlite3.connect('registry_database.db')
+try:
+    patch_conn.execute("ALTER TABLE Pending_Promotions ADD COLUMN registration_letter BLOB")
+    patch_conn.commit()
+except sqlite3.OperationalError:
+    pass # The column already exists, safely skip it!
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
@@ -961,19 +970,31 @@ else:
                     req_role = st.selectbox("Requested Title", ["Senior Lecturer", "Associate Professor", "Professor"])
                     req_category = st.selectbox("Requested Category", ["Category 1 (Management)", "Category 2 (Professional)", "Category 3 (Technical)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)"])
                     
+                    # --- NEW: THE PDF UPLOADER ---
+                    st.info("📄 Please attach your official Registration Letter to proceed.")
+                    reg_letter = st.file_uploader("Upload Registration Letter (PDF only)", type=["pdf"])
+                    
                     if st.form_submit_button("Submit Application"):
-                        cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
-                        max_id_result = cursor.fetchone()[0]
-                        new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
-                        
-                        cursor.execute("""
-                            INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason)
-                            VALUES (?, ?, ?, ?, 'Pending Registry', '')
-                        """, (new_ticket_id, st.session_state.user_id, req_role, req_category))
-                        
-                        conn.commit()
-                        st.success("Application successfully submitted to the Registry Office!")
-                        st.rerun()
+                        # Safety Catch: Block them if they forgot the PDF!
+                        if reg_letter is None:
+                            st.error("⚠️ You must upload your PDF Registration Letter to apply.")
+                        else:
+                            # Convert the PDF into raw binary data so it can live in the database
+                            letter_bytes = reg_letter.read()
+                            
+                            cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
+                            max_id_result = cursor.fetchone()[0]
+                            new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
+                            
+                            # Save the application AND the PDF file at the same time
+                            cursor.execute("""
+                                INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason, registration_letter)
+                                VALUES (?, ?, ?, ?, 'Pending Registry', '', ?)
+                            """, (new_ticket_id, st.session_state.user_id, req_role, req_category, letter_bytes))
+                            
+                            conn.commit()
+                            st.success("Application and Letter successfully submitted to the Registry Office!")
+                            st.rerun()
             else:
                 st.info("Keep up the great work! You are currently working toward promotion eligibility.")
         else:
@@ -1411,80 +1432,7 @@ else:
                                     
                                 conn.commit()
                                 st.rerun()
-                # ==========================================
-                # SECTION C: PDF REGISTRY LETTER GENERATOR
-                # ==========================================
-                st.divider()
-                st.subheader("📜 Approved Promotions Archive (PDF Export)")
-                st.write("Generate official confirmation letters for registry records.")
                 
-                approved_df = pd.read_sql_query("""
-                    SELECT p.ticket_id, u.name as "Applicant", p.proposed_role as "New Role"
-                    FROM Pending_Promotions p
-                    JOIN Users u ON p.user_id = u.user_id
-                    WHERE p.status = 'Approved'
-                """, conn)
-                
-                if approved_df.empty:
-                    st.info("No approved promotions on record yet.")
-                else:
-                    # Let the HoS select an approved ticket to generate a letter for
-                    pdf_ticket = st.selectbox("Select Approved Promotion to Generate Letter:", approved_df['ticket_id'].astype(str) + " - " + approved_df['Applicant'])
-                    
-                    if pdf_ticket:
-                        t_id = int(pdf_ticket.split(" - ")[0])
-                        applicant_name = approved_df[approved_df['ticket_id'] == t_id]['Applicant'].iloc[0]
-                        new_role = approved_df[approved_df['ticket_id'] == t_id]['New Role'].iloc[0]
-                        
-                        # --- PDF GENERATION FUNCTION ---
-                        def create_pdf(name, role):
-                            pdf = FPDF()
-                            pdf.add_page()
-                            
-                            # Header
-                            pdf.set_font("Arial", "B", 16)
-                            pdf.cell(0, 10, "UNIVERSITY OF TECHNOLOGY, MAURITIUS", ln=True, align="C")
-                            pdf.set_font("Arial", "I", 12)
-                            pdf.cell(0, 10, "Official Registry Office - Promotion Confirmation", ln=True, align="C")
-                            pdf.ln(10)
-                            
-                            # Body
-                            pdf.set_font("Arial", "", 12)
-                            date_str = datetime.datetime.now().strftime("%d %B %Y")
-                            pdf.cell(0, 10, f"Date: {date_str}", ln=True)
-                            pdf.ln(5)
-                            pdf.cell(0, 10, f"Dear {name},", ln=True)
-                            pdf.ln(5)
-                            
-                            body_text = f"We are pleased to officially inform you that your recent application for academic promotion has been approved by the Head of School. Effective immediately, your official title and designation is updated to: {role}."
-                            pdf.multi_cell(0, 10, body_text)
-                            pdf.ln(5)
-                            
-                            pdf.multi_cell(0, 10, "We thank you for your continued dedication, research, and contribution to the academic excellence of our university.")
-                            pdf.ln(20)
-                            
-                            # Signatures
-                            pdf.cell(0, 10, "_________________________", ln=True)
-                            pdf.cell(0, 10, "Head of School Signature", ln=True)
-                            
-                            # Cross-compatibility output for FPDF
-                            try:
-                                return pdf.output(dest='S').encode('latin-1')
-                            except:
-                                return bytes(pdf.output())
-
-                        # Generate the byte data
-                        pdf_data = create_pdf(applicant_name, new_role)
-                        
-                        # The Streamlit Download Button!
-                        st.download_button(
-                            label=f"📥 Download PDF Letter for {applicant_name}",
-                            data=pdf_data,
-                            file_name=f"Promotion_Letter_{applicant_name.replace(' ', '_')}.pdf",
-                            mime="application/pdf",
-                            type="primary"
-                        )
-
             except Exception as e:
                 st.error(f"Error loading dashboard: {e}")
             conn.close()
