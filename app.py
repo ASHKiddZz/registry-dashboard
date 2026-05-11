@@ -876,9 +876,9 @@ else:
 
             st.divider()
 
-            # --- PART 2: THE VERIFICATION QUEUE (ACTIONABLE) ---
+            # --- PART 2: THE VERIFICATION QUEUE & LETTERS ---
             st.subheader("📥 Application Verification Queue")
-            st.write("Forward verified promotion applications to the respective Department Heads.")
+            st.write("Review registration letters and forward verified applications to the respective Department Heads.")
 
             try:
                 # Only pull tickets waiting for Registry verification
@@ -894,23 +894,55 @@ else:
                     st.success("✅ No new promotion applications require forwarding at this time.")
                 else:
                     st.dataframe(queue_df, use_container_width=True, hide_index=True)
+                    st.divider()
 
-                    st.write("### Process Application")
+                    # --- NEW: REVIEW APPLICATION LETTER ---
+                    st.write("### 📄 Step 1: Review Registration Letter")
+                    view_ticket = st.selectbox("Select Ticket ID to Download Letter:", queue_df['ticket_id'], key="reg_letter_select")
+                    
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT u.name, p.registration_letter FROM Pending_Promotions p JOIN Users u ON p.user_id = u.user_id WHERE p.ticket_id = ?", (int(view_ticket),))
+                    letter_data = cursor.fetchone()
+                    
+                    if letter_data and letter_data[1]:
+                        applicant_name = letter_data[0]
+                        pdf_bytes = letter_data[1]
+                        
+                        st.download_button(
+                            label=f"📥 Download Registration Letter ({applicant_name})",
+                            data=pdf_bytes,
+                            file_name=f"Registration_Letter_{applicant_name.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            type="secondary"
+                        )
+                    else:
+                        st.warning("⚠️ No registration letter is attached to this ticket.")
+                        
+                    st.divider()
+                    
+                    # --- NEW: VERIFICATION DECISION WITH REJECT LOGIC ---
+                    st.write("### ✅ Step 2: Verification Decision")
 
                     with st.form("registry_verify_form"):
-                        # Simplified UI: Just select the ticket and forward it
-                        selected_ticket = st.selectbox("Select Ticket ID to Process", queue_df['ticket_id'])
+                        action = st.radio("Registry Decision", ["Verify & Forward to HoD", "Reject (Invalid/Missing Documents)"], horizontal=True)
+                        rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)", placeholder="e.g., The attached PDF is blurred or incorrect.")
+                        
+                        if st.form_submit_button("Submit Verification", type="primary", use_container_width=True):
+                            if "Reject" in action and not rejection_reason.strip():
+                                st.error("You must provide a reason for rejecting the document.")
+                            else:
+                                if "Verify" in action:
+                                    # Move the ticket to the HoD's desk!
+                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoD', rejection_reason = '' WHERE ticket_id = ?", (view_ticket,))
+                                    st.success(f"Ticket #{view_ticket} verified and forwarded to the HoD!")
+                                else:
+                                    # Kick it back to the Lecturer
+                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected', rejection_reason = ? WHERE ticket_id = ?", (rejection_reason, view_ticket))
+                                    st.warning(f"Ticket #{view_ticket} has been rejected and sent back to the applicant.")
+                                    
+                                conn.commit()
+                                st.rerun()
 
-                        # The submit button now acts as the sole action
-                        if st.form_submit_button("Verify & Forward to HoD", use_container_width=True):
-                            cursor = conn.cursor()
-                            
-                            # Instantly update status to Pending HoD. No rejection logic needed.
-                            cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoD' WHERE ticket_id = ?", (selected_ticket,))
-                            conn.commit()
-                            
-                            st.success(f"Ticket #{selected_ticket} successfully verified and forwarded to the HoD!")
-                            st.rerun()
             except Exception as e:
                 st.error(f"Error loading verification queue: {e}")
                 
@@ -1246,6 +1278,32 @@ else:
                     st.dataframe(promo_df, use_container_width=True, hide_index=True)
                     
                     st.divider()
+
+                    # --- NEW: REVIEW APPLICATION LETTER SECTION ---
+                    st.write("### 📄 Review Application Letter")
+                    view_ticket = st.selectbox("Select Ticket ID to Download Letter:", promo_df['ticket_id'], key="hod_letter_select")
+                    
+                    # Fetch the PDF BLOB from the database
+                    cursor = conn.execute("SELECT u.name, p.registration_letter FROM Pending_Promotions p JOIN Users u ON p.user_id = u.user_id WHERE p.ticket_id = ?", (int(view_ticket),))
+                    letter_data = cursor.fetchone()
+                    
+                    if letter_data and letter_data[1]:
+                        applicant_name = letter_data[0]
+                        pdf_bytes = letter_data[1]
+                        
+                        st.download_button(
+                            label=f"📥 Download Registration Letter ({applicant_name})",
+                            data=pdf_bytes,
+                            file_name=f"Registration_Letter_{applicant_name.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            type="secondary"
+                        )
+                    else:
+                        st.warning("⚠️ No registration letter is attached to this ticket. (Legacy Application)")
+                        
+                    st.divider()
+                    # --- END NEW SECTION ---
+
                     st.write("### Process a Request")
                     
                     with st.form("hod_promo_form"):
@@ -1399,6 +1457,32 @@ else:
                     st.dataframe(promo_df, use_container_width=True, hide_index=True)
                     
                     st.divider()
+
+                    # --- NEW: REVIEW APPLICATION LETTER SECTION ---
+                    st.write("### 📄 Review Application Letter")
+                    view_ticket = st.selectbox("Select Ticket ID to Download Letter:", promo_df['ticket_id'], key="hos_letter_select")
+                    
+                    # Fetch the PDF BLOB from the database
+                    cursor = conn.execute("SELECT u.name, p.registration_letter FROM Pending_Promotions p JOIN Users u ON p.user_id = u.user_id WHERE p.ticket_id = ?", (int(view_ticket),))
+                    letter_data = cursor.fetchone()
+                    
+                    if letter_data and letter_data[1]:
+                        applicant_name = letter_data[0]
+                        pdf_bytes = letter_data[1]
+                        
+                        st.download_button(
+                            label=f"📥 Download Registration Letter ({applicant_name})",
+                            data=pdf_bytes,
+                            file_name=f"Registration_Letter_{applicant_name.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            type="secondary"
+                        )
+                    else:
+                        st.warning("⚠️ No registration letter is attached to this ticket. (Legacy Application)")
+                        
+                    st.divider()
+                    # --- END NEW SECTION ---
+
                     st.write("### Finalize Request")
                     
                     with st.form("hos_promo_form"):
