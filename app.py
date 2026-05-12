@@ -499,31 +499,89 @@ else:
 
             st.divider()
             
-            # --- RESTORED: Bulk Import Excel ---
-            st.subheader("Bulk Import Modules")
-            st.info("Upload the final Allocation Excel document here when it arrives.")
-            uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "xls"])
+            # --- UPGRADED: BULK IMPORT MODULES (DUAL-FORMAT) ---
+            st.subheader("📥 Bulk Import / Update Modules")
+            st.info("Upload a standard module list or the official UTM timetable to auto-update module records.")
+            
+            format_choice = st.radio("Select Excel Format:", ["Standard Clean Format", "UTM Official Format (Skips 7 rows)"], horizontal=True, key="tab2_format")
+            
+            uploaded_file = st.file_uploader("Upload Modules Excel file", type=["xlsx", "xls"], key="module_uploader")
             if uploaded_file is not None:
-                df = pd.read_excel(uploaded_file)
-                st.write("File Preview:")
-                st.dataframe(df.head())
-                
-                if st.button("Import Data to Database"):
-                    cursor = conn.cursor()
-                    success_count = 0
-                    for index, row in df.iterrows():
-                        cursor.execute('''
-                            INSERT OR REPLACE INTO Modules 
-                            (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours) 
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (
-                            str(row['Module Code']), str(row['Module Name']), int(row['Duration (Weeks)']), 
-                            int(row['Lecture Hours (L)']), int(row['Tutorial Hours (T)']), int(row['Practical Hours (P)'])
-                        ))
-                        success_count += 1
-                    conn.commit()
-                    st.success(f"Successfully imported {success_count} modules from Excel!")
-                    st.rerun()
+                try:
+                    if "UTM" in format_choice:
+                        mod_df = pd.read_excel(uploaded_file, header=7)
+                        col_code = 'Module Code'
+                        col_name = 'Module Title'
+                        col_prog = 'Programme'
+                        col_coord = 'PROGRAMME COORDINATOR'
+                        col_weight = 'Weightage'
+                    else:
+                        mod_df = pd.read_excel(uploaded_file)
+                        col_code = 'Module Code'
+                        col_name = 'Module Name'
+                        col_prog = 'Programme'
+                        col_coord = 'Coordinator'
+                        col_weight = 'Weightage'
+                        
+                    st.write("File Preview:")
+                    st.dataframe(mod_df.head())
+                        
+                    required_cols = [col_code, col_name]
+                    missing_cols = [col for col in required_cols if col not in mod_df.columns]
+                    
+                    if missing_cols:
+                        st.error(f"⚠️ Your file is missing these required columns: {', '.join(missing_cols)}")
+                    else:
+                        if st.button("Run Bulk Module Import", type="primary"):
+                            cursor = conn.cursor()
+                            import_count = 0
+                            
+                            for index, row in mod_df.iterrows():
+                                code = str(row[col_code]).strip()
+                                name = str(row[col_name]).strip()
+                                
+                                # Skip empty rows
+                                if code == 'nan' or code == '': continue
+                                
+                                # Safe extraction with .get() (won't crash if columns are missing)
+                                prog = str(row.get(col_prog, 'General')).strip()
+                                coord = str(row.get(col_coord, 'Unassigned')).strip()
+                                
+                                try: weight = float(row.get(col_weight, 0))
+                                except: weight = 0.0
+                                
+                                try: duration = int(row.get('Duration (Weeks)', 15))
+                                except: duration = 15
+                                
+                                try: hours = int(row.get('Lecture Hours (L)', 3))
+                                except: hours = 3
+                                
+                                try: tut_hours = int(row.get('Tutorial Hours (T)', 0))
+                                except: tut_hours = 0
+                                
+                                try: prac_hours = int(row.get('Practical Hours (P)', 0))
+                                except: prac_hours = 0
+                                
+                                cursor.execute("SELECT * FROM Modules WHERE module_id=?", (code,))
+                                if cursor.fetchone():
+                                    # Update existing module
+                                    cursor.execute('''UPDATE Modules SET 
+                                        module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=?, 
+                                        programme=?, programme_coordinator=?, weightage=? WHERE module_id=?''', 
+                                        (name, duration, hours, tut_hours, prac_hours, prog, coord, weight, code))
+                                else:
+                                    # Create new module
+                                    cursor.execute('''INSERT INTO Modules 
+                                        (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+                                        (code, name, duration, hours, tut_hours, prac_hours, prog, coord, weight))
+                                import_count += 1
+                                
+                            conn.commit()
+                            st.success(f"✅ Successfully imported or updated {import_count} modules!")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
             
             st.divider()
             
@@ -780,9 +838,14 @@ else:
                                     title = raw_name.split("(")[1].split(")")[0].strip() # Extracts 'Mr', 'Dr', etc.
                                     staff_name = raw_name.split("(")[0].strip()
                                 
-                                # 2. Safely Extract New Enterprise Data (Using .get() so it doesn't crash if a standard file lacks them)
+                                # 2. Safely Extract New Enterprise Data
                                 mod_code = str(row[col_module]).strip()
                                 mod_title = str(row.get(col_mod_title, 'Unknown')).strip()
+                                
+                                # --- THE FIX 1: Catch Pandas 'nan' from blank Excel cells ---
+                                if mod_title.lower() == 'nan':
+                                    mod_title = 'Unknown Title'
+                                    
                                 cohort = str(row.get(col_cohort, 'Group A')).strip() 
                                 dept = str(row.get(col_dept, 'Unassigned')).strip()
                                 prog = str(row.get(col_prog, 'General')).strip()
@@ -806,11 +869,23 @@ else:
                                 # --- DATABASE UPDATES ---
                                 
                                 # Step A: Enrich Module Data (Insert if missing, Update if exists)
-                                cursor.execute("SELECT module_id FROM Modules WHERE module_id=?", (mod_code,))
-                                if cursor.fetchone():
-                                    cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (prog, weight, coord, mod_code))
+                                cursor.execute("SELECT module_id, module_name FROM Modules WHERE module_id=?", (mod_code,))
+                                existing_mod = cursor.fetchone()
+                                
+                                if existing_mod:
+                                    # THE FIX 2: Auto-correct the name if it was previously corrupted by 'nan'
+                                    if str(existing_mod[1]).lower() == 'nan' and mod_title != 'Unknown Title':
+                                        cursor.execute("UPDATE Modules SET module_name=?, programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (mod_title, prog, weight, coord, mod_code))
+                                    else:
+                                        cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (prog, weight, coord, mod_code))
                                 else:
-                                    cursor.execute("INSERT INTO Modules (module_id, module_name, programme, weightage, programme_coordinator) VALUES (?, ?, ?, ?, ?)", (mod_code, mod_title, prog, weight, coord))
+                                    # THE FIX 3: Default hours inserted so Tab 2 never shows 'None' again!
+                                    cursor.execute("""
+                                        INSERT INTO Modules (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, weightage, programme_coordinator) 
+                                        VALUES (?, ?, 15, 3, 0, 0, ?, ?, ?)
+                                    """, (mod_code, mod_title, prog, weight, coord))
+
+                                # Step B: Match User and Enrich Profile
 
                                 # Step B: Match User and Enrich Profile
                                 cursor.execute("SELECT user_id FROM Users WHERE name LIKE ?", (f"%{staff_name}%",))
