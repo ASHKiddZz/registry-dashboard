@@ -150,6 +150,16 @@ except sqlite3.OperationalError:
     pass # The column already exists, safely skip it!
 patch_conn.close()
 
+# Silent DB Upgrade 7: Add missing hour tracking to Modules table
+patch_conn = sqlite3.connect('registry_database.db')
+try:
+    patch_conn.execute("ALTER TABLE Modules ADD COLUMN tutorial_hours INTEGER DEFAULT 0")
+    patch_conn.execute("ALTER TABLE Modules ADD COLUMN practical_hours INTEGER DEFAULT 0")
+    patch_conn.commit()
+except sqlite3.OperationalError:
+    pass # If the columns already exist, this safely skips and does nothing!
+patch_conn.close()
+
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
