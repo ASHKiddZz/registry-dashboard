@@ -1206,12 +1206,21 @@ else:
         
         cursor = conn.cursor()
         
-        # Fetch all allocations with the new Enterprise metrics
+        # UPGRADED SQL: Now fetches Programme, Coordinator, Lecture Hours, and FT/PT!
         my_modules_query = """
-            SELECT a.semester as "Semester", a.module_id as "Module Code", m.module_name as "Module Title", 
-                   a.cohort as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
+            SELECT a.semester as "Semester", 
+                   a.module_id as "Module Code", 
+                   m.module_name as "Module Title", 
+                   m.programme as "Programme",
+                   a.cohort as "Cohort", 
+                   u.employment_type as "FT/PT",
+                   m.lecture_hours as "L. Hrs",
+                   a.students_count as "Students", 
+                   m.weightage as "Weightage",
+                   m.programme_coordinator as "Coordinator"
             FROM Allocations a
             JOIN Modules m ON a.module_id = m.module_id
+            JOIN Users u ON a.user_id = u.user_id
             WHERE a.user_id = ?
             ORDER BY a.semester DESC
         """
@@ -1249,8 +1258,8 @@ else:
             if not past_df.empty:
                 with st.expander("📂 View Previous Semester Historical Log"):
                     st.info("This is a permanent record of your past teaching allocations.")
-                    st.dataframe(past_df, use_container_width=True, hide_index=True)
-            
+                    st.dataframe(past_df.drop(columns=['Semester']), use_container_width=True, hide_index=True)
+        
         st.divider()
 
         conn.close()
