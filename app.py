@@ -1259,7 +1259,86 @@ else:
                 with st.expander("📂 View Previous Semester Historical Log"):
                     st.info("This is a permanent record of your past teaching allocations.")
                     st.dataframe(past_df.drop(columns=['Semester']), use_container_width=True, hide_index=True)
-        
+            
+            # --- NEW: WORKLOAD PDF EXPORT ---
+            st.write("### 🖨️ Export Official Workload Report")
+            st.info("Download a formatted PDF summary of your entire workload across all semesters for board meetings and records.")
+            
+            # Fetch User Details for the PDF Header
+            user_data = cursor.execute("SELECT name, role FROM Users WHERE user_id = ?", (st.session_state.user_id,)).fetchone()
+            lec_name = user_data[0]
+            lec_role = user_data[1]
+            
+            def create_workload_pdf(name, role, df):
+                pdf = FPDF()
+                pdf.add_page()
+                
+                # Header
+                pdf.set_font("Arial", "B", 16)
+                pdf.cell(0, 10, "UNIVERSITY OF TECHNOLOGY, MAURITIUS", ln=True, align="C")
+                pdf.set_font("Arial", "I", 12)
+                pdf.cell(0, 10, "Official Lecturer Workload Summary", ln=True, align="C")
+                pdf.ln(10)
+                
+                # Lecturer Info
+                pdf.set_font("Arial", "", 12)
+                date_str = datetime.datetime.now().strftime("%d %B %Y")
+                pdf.cell(0, 8, f"Date of Report: {date_str}", ln=True)
+                pdf.cell(0, 8, f"Lecturer Name: {name}", ln=True)
+                pdf.cell(0, 8, f"Designation: {role}", ln=True)
+                pdf.ln(5)
+                
+                # Summary Statistics
+                total_students = df['Students'].sum()
+                total_modules = len(df)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 10, f"Total Assigned Modules: {total_modules}  |  Total Students: {total_students}", ln=True)
+                pdf.ln(5)
+                
+                # Table Header
+                pdf.set_font("Arial", "B", 10)
+                pdf.set_fill_color(200, 200, 200) # Light Gray background for the header
+                pdf.cell(25, 10, "Semester", border=1, fill=True)
+                pdf.cell(25, 10, "Code", border=1, fill=True)
+                pdf.cell(80, 10, "Module Title", border=1, fill=True)
+                pdf.cell(30, 10, "Cohort", border=1, fill=True)
+                pdf.cell(30, 10, "Students", border=1, fill=True, ln=True)
+                
+                # Table Body
+                pdf.set_font("Arial", "", 9)
+                for index, row in df.iterrows():
+                    pdf.cell(25, 10, str(row['Semester']), border=1)
+                    pdf.cell(25, 10, str(row['Module Code']), border=1)
+                    
+                    # Ensure long module titles don't break the table boundaries
+                    title = str(row['Module Title'])
+                    if len(title) > 42: title = title[:39] + "..."
+                    pdf.cell(80, 10, title, border=1)
+                    
+                    pdf.cell(30, 10, str(row['Cohort']), border=1)
+                    pdf.cell(30, 10, str(row['Students']), border=1, ln=True)
+                    
+                pdf.ln(15)
+                pdf.set_font("Arial", "I", 9)
+                pdf.cell(0, 10, "This is an officially generated workload report from the University Registry System.", ln=True, align="C")
+                
+                try:
+                    return pdf.output(dest='S').encode('latin-1')
+                except:
+                    return bytes(pdf.output())
+
+            # Generate the PDF in the background
+            pdf_bytes = create_workload_pdf(lec_name, lec_role, my_modules_df)
+            
+            # The magical Download Button
+            st.download_button(
+                label="📥 Download Official Workload PDF",
+                data=pdf_bytes,
+                file_name=f"Workload_Summary_{lec_name.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
+
         st.divider()
 
         conn.close()
