@@ -1383,32 +1383,6 @@ else:
                 
                 st.divider()
 
-                # --- THE SUPERVISOR'S DUAL-COLOR GRAPH ---
-                st.write("### 📊 Annual Workload Comparison")
-                st.info("Displays the module workload for each staff member, split by semester.")
-                
-                # We pull data for BOTH semesters simultaneously to build the comparison
-                graph_query = """
-                    SELECT u.name, a.semester, COUNT(a.module_id) as "module_count"
-                    FROM Users u
-                    JOIN Allocations a ON u.user_id = a.user_id
-                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')
-                    GROUP BY u.name, a.semester
-                """
-                graph_df = pd.read_sql_query(graph_query, conn)
-                
-                if not graph_df.empty:
-                    # Pivot the data: Staff names on the left, Semester 1 & 2 as side-by-side columns
-                    chart_data = graph_df.pivot(index='name', columns='semester', values='module_count').fillna(0)
-                    
-                    # Streamlit automatically assigns unique colors to different columns!
-                    # E.g., Semester 1 will be Blue, Semester 2 will be Red/Orange.
-                    st.bar_chart(chart_data, use_container_width=True)
-                else:
-                    st.warning("No allocation data available yet to generate the annual graph.")
-                
-                st.divider()
-
                 # --- 3. YOUR DUAL-FILTER SYSTEM (UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
@@ -1538,7 +1512,7 @@ else:
             conn = sqlite3.connect('registry_database.db')
             
             try:
-                # 1. High-Level Metrics
+                # --- 1. HIGH-LEVEL METRICS (PRESERVED) ---
                 col1, col2 = st.columns(2)
                 
                 # Count total teaching staff and active tickets waiting for the HoD
@@ -1550,23 +1524,26 @@ else:
                 
                 st.divider()
                 
-                # 2. Workload Distribution Chart
-                st.write("### Staff Teaching Load Distribution")
+                # --- 2. DUAL-SEMESTER WORKLOAD DISTRIBUTION CHART (UPGRADED) ---
+                st.write("### 📊 Annual Workload Comparison")
+                st.info("Displays the total module workload for each teaching staff member, split by semester.")
                 
-                # Query to count how many modules each specific lecturer is assigned to
-                workload_df = pd.read_sql_query("""
-                    SELECT u.name as "Staff Member", COUNT(a.module_id) as "Module Count"
+                # Upgraded Query: Added a.semester to the SELECT and GROUP BY to enable the dual-color split
+                chart_query = """
+                    SELECT u.name as "Staff Member", a.semester, COUNT(a.module_id) as "Module Count"
                     FROM Users u
-                    LEFT JOIN Allocations a ON u.user_id = a.user_id
+                    JOIN Allocations a ON u.user_id = a.user_id
                     WHERE u.category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')
-                    GROUP BY u.user_id
-                    ORDER BY "Module Count" DESC
-                """, conn)
+                    GROUP BY u.name, a.semester
+                """
+                chart_df = pd.read_sql_query(chart_query, conn)
                 
-                if not workload_df.empty:
-                    # Setting the index tells Streamlit to use the names on the X-axis of the chart
-                    workload_df.set_index('Staff Member', inplace=True)
-                    st.bar_chart(workload_df)
+                if not chart_df.empty:
+                    # Pivot the data: Staff names on the left (index), Semester 1 & 2 as side-by-side columns
+                    chart_data = chart_df.pivot(index='Staff Member', columns='semester', values='Module Count').fillna(0)
+                    
+                    # Streamlit automatically assigns unique, contrasting colors to the trend lines!
+                    st.line_chart(chart_data, use_container_width=True)
                 else:
                     st.info("No workload data available to chart.")
                     
