@@ -1383,6 +1383,32 @@ else:
                 
                 st.divider()
 
+                # --- THE SUPERVISOR'S DUAL-COLOR GRAPH ---
+                st.write("### 📊 Annual Workload Comparison")
+                st.info("Displays the module workload for each staff member, split by semester.")
+                
+                # We pull data for BOTH semesters simultaneously to build the comparison
+                graph_query = """
+                    SELECT u.name, a.semester, COUNT(a.module_id) as "module_count"
+                    FROM Users u
+                    JOIN Allocations a ON u.user_id = a.user_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')
+                    GROUP BY u.name, a.semester
+                """
+                graph_df = pd.read_sql_query(graph_query, conn)
+                
+                if not graph_df.empty:
+                    # Pivot the data: Staff names on the left, Semester 1 & 2 as side-by-side columns
+                    chart_data = graph_df.pivot(index='name', columns='semester', values='module_count').fillna(0)
+                    
+                    # Streamlit automatically assigns unique colors to different columns!
+                    # E.g., Semester 1 will be Blue, Semester 2 will be Red/Orange.
+                    st.bar_chart(chart_data, use_container_width=True)
+                else:
+                    st.warning("No allocation data available yet to generate the annual graph.")
+                
+                st.divider()
+
                 # --- 3. YOUR DUAL-FILTER SYSTEM (UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
