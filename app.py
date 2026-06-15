@@ -1389,11 +1389,9 @@ else:
                     
                     # Define dynamic limits based on the category
                     limit = 99
-                    if "Category 1 (Management)" in cat: return 2
-                    if "Category 2 (Professional)" in cat: return 1
-                    if "Category 3 (Technical)" in cat: return 2
-                    if "Category 4 (PhD Staff)" in cat: return 5
-                    if "Category 5 (Other Academic)" in cat: return 6
+                    if "Cat 1" in cat: limit = 2
+                    elif "Cat 4" in cat: limit = 5
+                    elif "Cat 5" in cat: limit = 6
                     
                     if assigned > limit:
                         st.error(f"⚠️ **OVERLOAD:** {row['name']} is assigned {assigned} modules (Limit is {limit} for {cat}).")
