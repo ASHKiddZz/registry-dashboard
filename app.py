@@ -1,11 +1,13 @@
+#import of libraries to make app more efficient
 import streamlit as st
 import sqlite3
 import pandas as pd
 import datetime
 import os
+import io
 from fpdf import FPDF
 
-# --- BULLETPROOF DATABASE SEEDER ---
+#Database seeder using excel import
 DB_FILE = 'registry_database.db'
 
 if not os.path.exists(DB_FILE):
@@ -17,8 +19,7 @@ if not os.path.exists(DB_FILE):
         for sheet_name in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet_name)
             
-            # --- 1. COLUMN-LEVEL SAFETY NET ---
-            # If the user completely forgot to include a column, we create it here with a default value.
+            #To prevent app from crashing incase the excel doc is missing a column, it will instead create it and assign default value to it.
             if sheet_name == 'Users':
                 if 'password' not in df.columns: df['password'] = 'Pass123!'
                 if 'hire_year' not in df.columns: df['hire_year'] = 2024
@@ -34,25 +35,23 @@ if not os.path.exists(DB_FILE):
                 if 'practical_hours' not in df.columns: df['practical_hours'] = 0
                 if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
             
-            # --- ADD THIS NEW BLOCK FOR ALLOCATIONS ---
+            #similarly if cohort column was not included in the imported excel doc then it will create it by default.
             elif sheet_name == 'Allocations':
                 if 'cohort' not in df.columns: df['cohort'] = 'Group A' # Default cohort
-            # ------------------------------------------
             
+            #It creates status and rejection_reason by default to avoid crash.
             elif sheet_name == 'Pending_Promotions':
                 if 'status' not in df.columns: df['status'] = 'Pending HoD'
                 # --- ADD THIS LINE ---
                 if 'rejection_reason' not in df.columns: df['rejection_reason'] = ''
                 
-            # --- 2. ROW-LEVEL SAFETY NET (Empty Cells) ---
             # If the column exists, but the user left specific cells blank (NaN), we fill those blanks.
-            
-            # First, fill specific numeric blanks safely
+            # First the columns that require numeric values need to be filled to a default value based on constraints given in scenarios.
             if 'duration' in df.columns: df['duration'] = df['duration'].fillna(12)
             if 'hire_year' in df.columns: df['hire_year'] = df['hire_year'].fillna(2024)
             if 'cohort' in df.columns: df['cohort'] = df['cohort'].fillna('Group A')
             
-            # Then, catch absolutely any other blank text cells and mark them as "Unknown" or empty string
+            # Then, any other columns related to text that are blank are filled with the value unknown to avoid crashing of app.
             df = df.fillna('Unknown') 
             
             # Save the clean, repaired dataframe to the SQL database
@@ -64,19 +63,22 @@ if not os.path.exists(DB_FILE):
     except Exception as e:
         st.error(f"Critical error seeding database: {e}")
 
-# 1. Setup the Page
+# This is setting up the registry page with it title and layout.
 st.set_page_config(page_title="Registry Workload System", layout="wide")
 
-# Silent DB Upgrade: Adds hire_year if it doesn't exist yet
+# Sometimes when building up the database either some additional columns must be added at a later stage or the excel doc is missing those columns which are crucial to create the database.
+# Therefore this section is to add those missing columns in the database without having to redo everything.
+
+# Adding hire year with default value of 2023 if the column is missing within the database.
 patch_conn = sqlite3.connect('registry_database.db')
 try:
     patch_conn.execute("ALTER TABLE Users ADD COLUMN hire_year INTEGER DEFAULT 2023")
     patch_conn.commit()
 except sqlite3.OperationalError:
-    pass # The column already exists, do nothing!
+    pass  #IF THE COLUMN ALREADY EXIST JUST PASS.
 patch_conn.close()
 
-# Silent DB Upgrade 2: Create the Waiting Room for Promotions
+# Creating Pending promotion table and adding all its columns such as ticket_id, User_id, etc...
 patch_conn = sqlite3.connect('registry_database.db')
 patch_conn.execute('''
     CREATE TABLE IF NOT EXISTS Pending_Promotions (
@@ -91,7 +93,7 @@ patch_conn.execute('''
 patch_conn.commit()
 patch_conn.close()
 
-# Silent DB Upgrade 3: Lecturer Remarks Inbox
+# Create Lecturer_Remarks table along with its contents in case if it doesnt exist for future excel document imports.
 patch_conn = sqlite3.connect('registry_database.db')
 patch_conn.execute('''
     CREATE TABLE IF NOT EXISTS Lecturer_Remarks (
@@ -105,33 +107,33 @@ patch_conn.execute('''
 patch_conn.commit()
 patch_conn.close()
 
-# Silent DB Upgrade 4: Multi-Semester Tracking for Allocations
+# Making changes to the allocations table to add semester column with default value semester 1.
 patch_conn = sqlite3.connect('registry_database.db')
 try:
     patch_conn.execute("ALTER TABLE Allocations ADD COLUMN semester TEXT DEFAULT 'Semester 1'")
     patch_conn.commit()
 except sqlite3.OperationalError:
-    pass # The column already exists, do nothing!
+    pass # Just pass if column already exists.
 patch_conn.close()
 
-# Silent DB Upgrade 5: Adding UTM Enterprise Data Columns
+# Adding crucial data from Utm timetable excel document.
 patch_conn = sqlite3.connect('registry_database.db')
 new_columns = [
-    # Expanding the Users Table
+    # Adding new columns to the User table based off timetable.
     ("Users", "employment_type", "TEXT DEFAULT 'FT'"),
     ("Users", "department", "TEXT DEFAULT 'Unassigned'"),
     ("Users", "title", "TEXT DEFAULT ''"),
     
-    # Expanding the Modules Table
+    #Adding new columns to the Modules table.
     ("Modules", "programme", "TEXT DEFAULT 'General'"),
     ("Modules", "weightage", "REAL DEFAULT 0"),
     ("Modules", "programme_coordinator", "TEXT DEFAULT 'Unassigned'"),
     
-    # Expanding the Allocations Table
+    # Adding new columns to the Allocations table.
     ("Allocations", "level_semester", "TEXT DEFAULT ''"),
     ("Allocations", "students_count", "INTEGER DEFAULT 0")
 ]
-
+# This small section is to ensure that anything missing column in a certain table is to added to avoid crashing the app.
 for table, col, dtype in new_columns:
     try:
         patch_conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dtype}")
@@ -141,23 +143,23 @@ for table, col, dtype in new_columns:
 patch_conn.commit()
 patch_conn.close()
 
-# Silent DB Upgrade 6: PDF Registration Letters Storage
+# Making changes to the pending promotions table to add registration letter column for future use when sending registration letter for a promotion.
 patch_conn = sqlite3.connect('registry_database.db')
 try:
     patch_conn.execute("ALTER TABLE Pending_Promotions ADD COLUMN registration_letter BLOB")
     patch_conn.commit()
 except sqlite3.OperationalError:
-    pass # The column already exists, safely skip it!
+    pass # Skip if the column already exists within the table.
 patch_conn.close()
 
-# Silent DB Upgrade 7: Add missing hour tracking to Modules table
+# Adding tutorial hours and practical hours columns to the Modules table along with a default value of 0.
 patch_conn = sqlite3.connect('registry_database.db')
 try:
     patch_conn.execute("ALTER TABLE Modules ADD COLUMN tutorial_hours INTEGER DEFAULT 0")
     patch_conn.execute("ALTER TABLE Modules ADD COLUMN practical_hours INTEGER DEFAULT 0")
     patch_conn.commit()
 except sqlite3.OperationalError:
-    pass # If the columns already exist, this safely skips and does nothing!
+    pass # Skip if those columns already exist within the table.
 patch_conn.close()
 
 # 2. Database Helper Function
@@ -176,7 +178,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_name = ""
     st.session_state.user_role = ""
 
-# 4. The Login Screen UI
+# 4. The login screen page with interactive UI.
 if not st.session_state.logged_in:
     st.title("Login - Registry Workload System")
     
@@ -196,7 +198,7 @@ if not st.session_state.logged_in:
             else:
                 st.error("Invalid Username or Password.")
 
-# 5. The Main Dashboard UI (Logged In)
+# 5. The main dashboard UI screen.
 else:
     st.sidebar.title(f"Welcome, {st.session_state.user_name}")
     st.sidebar.write(f"Role: **{st.session_state.user_role}**")
@@ -206,7 +208,7 @@ else:
         st.session_state.clear()
         st.rerun()
 
-    # --- ADMIN TOOLS ---
+    # A reset button option to cleanly rebuild the database, only available to the Admin(Registry).
     st.sidebar.divider()
     if st.sidebar.button("🚨 Reset Database to Default"):
         import os
@@ -214,13 +216,13 @@ else:
         if os.path.exists('registry_database.db'):
             os.remove('registry_database.db')
         
-        # 2. Log the user out so the app restarts completely
+        # When the user logs out the app will restart.
         st.session_state.clear()
         
-        # 3. Reload the page (triggers the Excel seeder at the top!)
+        # 3. This reloads the page and triggers the excel seeder at the top of the page.
         st.rerun()
         
-    # --- PASSWORD UPDATER FEATURE ---
+    # This section is a feature that allows the users to update their password whenever they feel like it.
     with st.sidebar.expander("⚙️ Change Password"):
         with st.form("password_form"):
             new_pass = st.text_input("New Password", type="password")
@@ -243,11 +245,11 @@ else:
 
     
     
-    # --- TABBED REGISTRY OFFICER VIEW ---
+    # This section is the whole registry dashboard with all its features within it.
     def registry_dashboard():
         st.title("🛡️ Registry Officer Dashboard")
         
-        # --- NOTIFICATION CENTER: Unread Staff Remarks ---
+        # This section checks if there are any unread remarks, if so it is flagged with a message.
         conn = sqlite3.connect('registry_database.db')
         
         try:
@@ -259,7 +261,7 @@ else:
             """, conn)
 
             if not remarks_df.empty:
-                # st.expander creates a drop-down box that is bright and noticeable
+                # The st.expander creates a sort of drop down box that is bright and noticeable.
                 with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
                     st.dataframe(remarks_df, hide_index=True, use_container_width=True)
                 
@@ -277,34 +279,33 @@ else:
                                 st.success("Remark cleared from dashboard!")
                                 st.rerun()
         except Exception as e:
-            # If the database crashes here, we will now see exactly why!
+            # If the database crashes here, we will now see exactly why it did.
             st.error(f"Error loading remarks: {e}")
             
         conn.close()
     
         st.divider()
         
-        # Rebuilding the tabs
+        # Building the tabs within the registry dashboard.
         tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
             st.subheader("Current System Users")
-            # ... (keep your existing code for tab1 perfectly intact below this line)
             conn = sqlite3.connect('registry_database.db')
             users_df = pd.read_sql_query("SELECT user_id, name, role, category_level FROM Users", conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
             
             st.divider()
             
-            # --- NEW: Edit or Delete Existing User ---
+            # This section allows the Admin to edit and delete Users within the database.
             st.subheader("Edit or Delete Staff")
             
-            # Create a combined string for the dropdown (e.g., "1 - Super Admin")
+            # This creates a drop down user list also listing the names of the users with their id.
             user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
             selected_user_str = st.selectbox("Select User to Modify", user_list)
             
             if selected_user_str:
-                # Extract just the ID number from the string
+                # It only outputs the id of the selected user.
                 selected_id = int(selected_user_str.split(" - ")[0])
                 
                 # Grab that specific user's current data to fill the default values
@@ -312,7 +313,7 @@ else:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    # Remember: This "Name" is what they use to log in (their username)
+                    # The Users' name is what they will use to login as their username.
                     edit_name = st.text_input("Update Name (Username)", value=current_data['name'])
                     
                     roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
@@ -326,7 +327,7 @@ else:
                     level_index = levels.index(current_level) if current_level in levels else 0
                     edit_level = st.selectbox("Update Category", levels, index=level_index)
                     
-                    # --- THE NEW PASSWORD RESET FIELD ---
+                    # This is a feature that allows a password reset incase they forget their password.
                     edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
                     
                 st.write("Actions:")
@@ -334,11 +335,11 @@ else:
                 with btn_col1:
                     if st.button("Update User", use_container_width=True):
                         cursor = conn.cursor()
-                        # If the admin typed a new password, update everything
+                        # If the admin were to type a new password, then everything will require to be updated.
                         if edit_password: 
                             cursor.execute("UPDATE Users SET name=?, role=?, category_level=?, password=? WHERE user_id=?", 
                                            (edit_name, edit_role, edit_level, edit_password, selected_id))
-                        # If left blank, update everything EXCEPT the password
+                        # If no new password was typed in the blank space, then everything except the password would be updated.
                         else: 
                             cursor.execute("UPDATE Users SET name=?, role=?, category_level=? WHERE user_id=?", 
                                            (edit_name, edit_role, edit_level, selected_id))
@@ -360,14 +361,14 @@ else:
 
             st.divider()
             
-            # --- RESTORED: Add User Form ---
+            # This section is to be able to manually add a new user providing all necessary informations within each field box.
             st.subheader("Register New Staff Member")
             with st.form("add_user_form", clear_on_submit=True):
                 new_name = st.text_input("Full Name")
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
                 new_level = st.selectbox("Category Limit", ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"])
     
-                # --- NEW: Hire Year Input ---
+                # This section is to manually insert the hire year of a specific user.
                 current_yr = datetime.datetime.now().year
                 new_hire_year = st.number_input("Year Hired", min_value=1990, max_value=current_yr, value=current_yr)
     
@@ -378,7 +379,6 @@ else:
                 if submit_user:
                     if new_name and new_pass:
                         cursor = conn.cursor()
-                        # --- NEW: Updated INSERT command to include hire_year ---
                         cursor.execute("INSERT INTO Users (name, role, category_level, password, hire_year) VALUES (?, ?, ?, ?, ?)", 
                                        (new_name, new_role, new_level, new_pass, new_hire_year))
                         conn.commit()
@@ -387,48 +387,47 @@ else:
                     else:
                         st.error("Please fill out the Name and Password fields.")
             conn.close()
-
-        st.divider() # Creates a nice visual line break
+        
+        # This creates a fine line between each section to make it appear more clean.
+        st.divider()
         st.subheader("📥 Bulk Import Staff (Annex Upload)")
 
-        # 1. Create the drag-and-drop zone
+        # This is the rectangular box where you can drag and drop files that needs to be imported on the database.
         uploaded_file = st.file_uploader("Upload staff list (CSV or Excel)", type=['csv', 'xlsx'])
 
         if uploaded_file is not None:
-            # 2. Read the file into Pandas
+            # It will read the file into Pandas.
             try:
                 if uploaded_file.name.endswith('.csv'):
                     import_df = pd.read_csv(uploaded_file)
                 else:
                     import_df = pd.read_excel(uploaded_file)
-            
+                # When the excel document is uploaded, a small preview wil be displayed with the first 3 rows showing on the overview table.
                 st.write("Preview of uploaded document:")
-                st.dataframe(import_df.head(3)) # Show the first 3 rows
+                st.dataframe(import_df.head(3))
 
-                # 3. The Import Button
+                # This is the import button feature to register all data on the imported document to the database.
                 if st.button("Process & Import Users"):
                     cursor = conn.cursor()
                     added_count = 0
                     skipped_count = 0
 
                     for index, row in import_df.iterrows():
-                        # NOTE: You must change 'Name' and 'Role' to match the exact column headers in your annex file!
                         staff_name = str(row.get('Name', '')).strip()
                         staff_role = str(row.get('Role', '')).strip()
                         category = str(row.get('Category_Level', 'N/A')).strip()
 
-                        # Make sure the row isn't blank
                         if staff_name and staff_name != 'nan':
 
-                            # Check if this person is already in the database
+                            # Check if this person is already in the database.
                             cursor.execute("SELECT * FROM Users WHERE name=?", (staff_name,))
                             if not cursor.fetchone():
-                                # Create the account with a default password
+                                # This is creates the account of the user with a default password which they can later change once they login on their dashboard.
                                 cursor.execute("INSERT INTO Users (name, role, category_level, password) VALUES (?, ?, ?, ?)",
                                                (staff_name, staff_role, category, 'welcome123'))
                                 added_count += 1
                             else:
-                                skipped_count += 1 # Person already exists, skip them!
+                                skipped_count += 1 # This skips the whole code if the user already exists within the database.
 
                     conn.commit()
 
@@ -445,7 +444,7 @@ else:
             conn = sqlite3.connect('registry_database.db')
             modules_df = pd.read_sql_query("SELECT * FROM Modules", conn)
             
-            # --- NEW: Clean up the column names for the display table ---
+            # To properly match the UTM timetable columns names, I had to rename the already written column names in the database.
             display_df = modules_df.rename(columns={
                 'module_id': 'Module Code',
                 'module_name': 'Module Name',
@@ -459,7 +458,7 @@ else:
             
             st.divider()
             
-            # --- CLEAN BULLETPROOF EDIT/DELETE MODULE ---
+            # This is the section where to admin can manually add or edit modules.
             st.subheader("Edit or Delete Module")
             
             if not modules_df.empty:
@@ -475,7 +474,7 @@ else:
                         st.info(f"Editing Module Code: **{selected_mod_id}**")
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
                         
-                        # .get() safely pulls the number, or defaults to the second number if missing!
+                        # .get() safely pulls the number, or defaults to the second number if missing.
                         default_dur = int(current_mod_data.get('duration', 12))
                         edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
                         
@@ -509,7 +508,7 @@ else:
 
             st.divider()
             
-            # --- UPGRADED: BULK IMPORT MODULES (DUAL-FORMAT) ---
+            # This is an updated version of the bulk import document, this one was designed to bypass the format error within UTM's timetable, there is one standard format and one to skip the rows error format.
             st.subheader("📥 Bulk Import / Update Modules")
             st.info("Upload a standard module list or the official UTM timetable to auto-update module records.")
             
@@ -550,7 +549,7 @@ else:
                                 code = str(row[col_code]).strip()
                                 name = str(row[col_name]).strip()
                                 
-                                # Skip empty rows
+                                # Incase the row is empty it will safely skip it proceeding with the extraction.
                                 if code == 'nan' or code == '': continue
                                 
                                 # Safe extraction with .get() (won't crash if columns are missing)
@@ -574,13 +573,13 @@ else:
                                 
                                 cursor.execute("SELECT * FROM Modules WHERE module_id=?", (code,))
                                 if cursor.fetchone():
-                                    # Update existing module
+                                    # This updates the already existing module.
                                     cursor.execute('''UPDATE Modules SET 
                                         module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=?, 
                                         programme=?, programme_coordinator=?, weightage=? WHERE module_id=?''', 
                                         (name, duration, hours, tut_hours, prac_hours, prog, coord, weight, code))
                                 else:
-                                    # Create new module
+                                    # This creates a new module.
                                     cursor.execute('''INSERT INTO Modules 
                                         (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
@@ -595,7 +594,7 @@ else:
             
             st.divider()
             
-            # --- RESTORED: Manually Add Module Form ---
+            # This section allows the admin to manually add new modules using the module form import feature.
             st.subheader("Manually Add a Module")
             with st.form("add_module_form", clear_on_submit=True):
                 col1, col2 = st.columns(2)
@@ -626,16 +625,16 @@ else:
             st.subheader("Workload & Allocations Overview")
             conn = sqlite3.connect('registry_database.db')
             
-            # --- GLOBAL SEMESTER FILTER ---
-            # This allows the Admin to flip the entire dashboard between Semester 1 and Semester 2
+            # Two semester tracking feature.
+            # This enables the admin to be able to track the workload over two semesters timeline by switching between two radio button semester 1 and 2.
             selected_semester = st.radio("⏳ Select Active Semester to View:", ["Semester 1", "Semester 2"], horizontal=True)
             st.divider()
             
-            # --- PART 1: THE SMART WORKLOAD MATH ---
+            # This is the smart workload calculator, it flags a lecturer if they exceeds their quota based off their roles and category.
             st.markdown(f"### Lecturer Workload Analysis ({selected_semester})")
             st.info("💡 Lecturers exceeding their category limit are highlighted automatically.")
             
-            # The math now filters strictly by the selected semester!
+            # The workload calculator will now operate based off the selected semester.
             workload_query = """
                 SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
                 FROM Users u
@@ -667,7 +666,7 @@ else:
             
             st.divider()
             
-            # --- PART 2: THE DETAILED MASTER LIST ---
+            # This section is a detailed master list.
             st.markdown(f"### Detailed Master List ({selected_semester})")
             
             all_data = pd.read_sql_query("""
@@ -691,7 +690,7 @@ else:
             
             st.divider()
 
-            # --- PART 3: MANAGE ALLOCATIONS ---
+            # This is the allocation tab section where the admin assigns modules to lecturers or remove them, etc...
             st.markdown("### Manual Assignment Control")
             
             if 'saved_staff_index' not in st.session_state:
@@ -699,7 +698,7 @@ else:
                 
             col1, col2 = st.columns(2)
             
-            # --- Left Side: Assign ---
+            # Assigning a module to a staff.
             with col1:
                 st.write("**Assign a Module to Staff**")
                 
@@ -725,7 +724,7 @@ else:
                             mod_list = mod_df['module_id'].astype(str) + " - " + mod_df['module_name']
                             selected_mod = st.selectbox("Select Module", mod_list)
                             
-                            # --- NEW: Semester Selection ---
+                            # Selecting between two semesters when assigning modules.
                             col_a, col_b = st.columns(2)
                             with col_a:
                                 assign_semester = st.selectbox("Target Semester", ["Semester 1", "Semester 2"], index=0 if selected_semester == "Semester 1" else 1)
@@ -740,18 +739,18 @@ else:
                                 m_id = selected_mod.split(" - ")[0]
                                 
                                 cursor = conn.cursor()
-                                # Check if they are already teaching this exact cohort in this exact semester
+                                # This checks if a lecturer is already teaching this particular module in the current semester.
                                 cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (s_id, m_id, assign_cohort, assign_semester))
                                 if cursor.fetchone():
                                     st.error(f"This person is already teaching {m_id} for {assign_cohort} in {assign_semester}!")
                                 else:
-                                    # Insert the new record with the correct semester
+                                    # Insert the new record with the correct semester.
                                     cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort, semester) VALUES (?, ?, ?, ?)", (s_id, m_id, assign_cohort, assign_semester))
                                     conn.commit()
                                     st.success(f"Assigned {m_id} ({assign_cohort}) to {assign_semester} successfully!")
                                     st.rerun()
 
-            # --- Right Side: Remove ---
+            # This is to remove a module allocated to a staff.
             with col2:
                 st.write("**Remove an Allocation**")
                 with st.form("remove_form"):
@@ -763,7 +762,6 @@ else:
                     """, conn)
                     
                     if not alloc_df.empty:
-                        # Include the semester in the dropdown string so you know exactly what you are deleting
                         alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_id'] + "|" + alloc_df['cohort'] + "|" + alloc_df['semester'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['cohort'] + ", " + alloc_df['semester'] + ")"
                         selected_alloc = st.selectbox("Select Assignment to Remove", alloc_list)
                         
@@ -782,7 +780,7 @@ else:
                         st.info("There are no allocations to remove.")
                         st.form_submit_button("Remove Allocation", disabled=True)
 
-                        # --- PART 4: ENTERPRISE TIMETABLE IMPORTER (DUAL FORMAT) ---
+            # This is the bulk import feature to import the Timetable along with allocations,etc...
             st.divider()
             st.markdown("### 📥 Bulk Import Timetable (Allocations & Enrichment)")
             st.info("Upload the timetable. The system will auto-assign modules AND enrich staff/module profiles with FT/PT, Weightage, and Student Counts.")
@@ -795,7 +793,7 @@ else:
                 try:
                     if "UTM" in format_choice:
                         tt_df = pd.read_excel(uploaded_tt, header=7)
-                        # Exact UTM Column Mappings
+                        # UTM timetable columns mapping
                         col_resource = 'Resource Person\nSURNAME Name (Title)'
                         col_module = 'Module Code'
                         col_mod_title = 'Module Title'
@@ -809,7 +807,7 @@ else:
                         col_ftpt = 'FT/PT'
                     else:
                         tt_df = pd.read_excel(uploaded_tt)
-                        # Clean Format Mappings
+                        # Clean format version of Timetable columns mapping
                         col_resource = 'Resource person Name'
                         col_module = 'Module Code'
                         col_mod_title = 'Module Name'
@@ -876,7 +874,7 @@ else:
                                 else:
                                     semester = str(row[col_level]).strip()
                                 
-                                # --- DATABASE UPDATES ---
+                                # Added changes to update database since there were missing factors from the timetable
                                 
                                 # Step A: Enrich Module Data (Insert if missing, Update if exists)
                                 cursor.execute("SELECT module_id, module_name FROM Modules WHERE module_id=?", (mod_code,))
@@ -1330,13 +1328,26 @@ else:
             # Generate the PDF in the background
             pdf_bytes = create_workload_pdf(lec_name, lec_role, my_modules_df)
             
-            # The magical Download Button
+            # The magical PDF Download Button
             st.download_button(
                 label="📥 Download Official Workload PDF",
                 data=pdf_bytes,
                 file_name=f"Workload_Summary_{lec_name.replace(' ', '_')}.pdf",
                 mime="application/pdf",
                 type="primary"
+            )
+            
+            # --- NEW: EXCEL EXPORT ---
+            excel_buffer = io.BytesIO()
+            # We use openpyxl to write the dataframe straight to an Excel format
+            my_modules_df.to_excel(excel_buffer, index=False, engine='openpyxl')
+            excel_data = excel_buffer.getvalue()
+            
+            st.download_button(
+                label="📊 Download Workload as Excel",
+                data=excel_data,
+                file_name=f"Workload_Data_{lec_name.replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
         st.divider()
