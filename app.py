@@ -1387,11 +1387,13 @@ else:
                     cat = str(row['category_level'])
                     assigned = int(row['Assigned_Modules'])
                     
-                    # Define dynamic limits based on the category
+                    # Define dynamic limits matching the Registry constraints exactly
                     limit = 99
-                    if "Cat 1" in cat: limit = 2
-                    elif "Cat 4" in cat: limit = 5
-                    elif "Cat 5" in cat: limit = 6
+                    if "Category 1 (Management)" in cat: limit = 2
+                    elif "Category 2 (Professional)" in cat: limit = 1
+                    elif "Category 3 (Technical)" in cat: limit = 2
+                    elif "Category 4 (PhD Staff)" in cat: limit = 5
+                    elif "Category 5 (Other Academic)" in cat: limit = 6
                     
                     if assigned > limit:
                         st.error(f"⚠️ **OVERLOAD:** {row['name']} is assigned {assigned} modules (Limit is {limit} for {cat}).")
