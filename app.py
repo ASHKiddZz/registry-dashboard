@@ -646,9 +646,11 @@ else:
             
             def get_category_limit(category):
                 if pd.isna(category): return 99 
-                if "Cat 1" in category: return 2
-                if "Cat 4" in category: return 5
-                if "Cat 5" in category: return 6
+                if "Category 1 (Management)" in category: return 2
+                if "Category 2 (Professional)" in category: return 1
+                if "Category 3 (Technical)" in category: return 2
+                if "Category 4 (PhD Staff)" in category: return 5
+                if "Category 5 (Other Academic)" in category: return 6
                 return 99 
                 
             workload_df['Limit'] = workload_df['Category'].apply(get_category_limit)
