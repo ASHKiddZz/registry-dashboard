@@ -1370,39 +1370,65 @@ else:
             conn = sqlite3.connect('registry_database.db')
             try:
                 # --- NEW: SYSTEM ALERTS (QUOTAS & PROMOTIONS) ---
-                st.write("### 🚨 Live System Alerts")
-                
-                # Fetch workload to check against quotas
+                # We use the exact same SQL logic as the Registry to guarantee matching math
                 alert_query = """
-                    SELECT u.name, u.category_level, COUNT(a.module_id) as "Assigned_Modules"
+                    SELECT u.name as "Staff Member", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
                     FROM Users u
                     LEFT JOIN Allocations a ON u.user_id = a.user_id
-                    WHERE u.role IN ('Lecturer', 'Senior Lecturer')
+                    WHERE u.role != 'Registry Officer'
                     GROUP BY u.user_id
                 """
                 alert_df = pd.read_sql_query(alert_query, conn)
                 
-                has_alerts = False
+                # Create an empty list to store ONLY the people who exceed limits or hit promotions
+                flagged_data = []
+                
                 for index, row in alert_df.iterrows():
-                    cat = str(row['category_level'])
-                    assigned = int(row['Assigned_Modules'])
+                    cat = str(row['Category'])
+                    assigned = int(row['Assigned Modules'])
                     
-                    # Define dynamic limits matching the Registry constraints exactly
+                    # Define dynamic limits exactly like the Registry constraints
                     limit = 99
                     if "Category 1 (Management)" in cat: limit = 2
                     elif "Category 2 (Professional)" in cat: limit = 1
                     elif "Category 3 (Technical)" in cat: limit = 2
-                    elif "Category 4 (PhD Staff)" in cat: limit = 6
+                    elif "Category 4 (PhD Staff)" in cat: limit = 5
                     elif "Category 5 (Other Academic)" in cat: limit = 6
                     
+                    # If they hit the limits, we add them to the flagged list
                     if assigned > limit:
-                        st.error(f"⚠️ **OVERLOAD:** {row['name']} is assigned {assigned} modules (Limit is {limit} for {cat}).")
-                        has_alerts = True
+                        flagged_data.append({
+                            "Staff Member": row['Staff Member'],
+                            "Category": cat,
+                            "Assigned": assigned,
+                            "Limit": limit,
+                            "Alert Type": "🚨 OVERLOAD"
+                        })
                     elif assigned == limit and limit != 99:
-                        st.success(f"📈 **PROMOTION ELIGIBLE:** {row['name']} has met their maximum quota of {limit} modules for {cat} and may be eligible for promotion.")
-                        has_alerts = True
-                        
-                if not has_alerts:
+                        flagged_data.append({
+                            "Staff Member": row['Staff Member'],
+                            "Category": cat,
+                            "Assigned": assigned,
+                            "Limit": limit,
+                            "Alert Type": "✅ PROMOTION ELIGIBLE"
+                        })
+                
+                # If the list has people in it, draw the clean Alert Table
+                if flagged_data:
+                    st.write("### 🚨 Staff Quota Alerts")
+                    flag_df = pd.DataFrame(flagged_data)
+                    
+                    # Add background colors based on the alert type
+                    def highlight_alerts(row):
+                        if row['Alert Type'] == '🚨 OVERLOAD':
+                            return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
+                        elif row['Alert Type'] == '✅ PROMOTION ELIGIBLE':
+                            return ['background-color: rgba(75, 255, 75, 0.2)'] * len(row)
+                        return [''] * len(row)
+                    
+                    styled_flag_df = flag_df.style.apply(highlight_alerts, axis=1)
+                    st.dataframe(styled_flag_df, use_container_width=True, hide_index=True)
+                else:
                     st.info("✅ All staff workloads are within normal limits. No pending promotion quotas met.")
                 
                 st.divider()
