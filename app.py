@@ -649,7 +649,7 @@ else:
                 if "Category 1 (Management)" in category: return 2
                 if "Category 2 (Professional)" in category: return 1
                 if "Category 3 (Technical)" in category: return 2
-                if "Category 4 (PhD Staff)" in category: return 6
+                if "Category 4 (PhD Staff)" in category: return 5
                 if "Category 5 (Other Academic)" in category: return 6
                 return 99 
                 
