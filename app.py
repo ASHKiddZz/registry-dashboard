@@ -1367,6 +1367,43 @@ else:
             st.subheader("Department Workload & Metrics")
             conn = sqlite3.connect('registry_database.db')
             try:
+                # --- NEW: SYSTEM ALERTS (QUOTAS & PROMOTIONS) ---
+                st.write("### 🚨 Live System Alerts")
+                
+                # Fetch workload to check against quotas
+                alert_query = """
+                    SELECT u.name, u.category_level, COUNT(a.module_id) as "Assigned_Modules"
+                    FROM Users u
+                    LEFT JOIN Allocations a ON u.user_id = a.user_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer')
+                    GROUP BY u.user_id
+                """
+                alert_df = pd.read_sql_query(alert_query, conn)
+                
+                has_alerts = False
+                for index, row in alert_df.iterrows():
+                    cat = str(row['category_level'])
+                    assigned = int(row['Assigned_Modules'])
+                    
+                    # Define dynamic limits based on the category
+                    limit = 99
+                    if "Cat 1" in cat: limit = 2
+                    elif "Cat 4" in cat: limit = 5
+                    elif "Cat 5" in cat: limit = 6
+                    
+                    if assigned > limit:
+                        st.error(f"⚠️ **OVERLOAD:** {row['name']} is assigned {assigned} modules (Limit is {limit} for {cat}).")
+                        has_alerts = True
+                    elif assigned == limit and limit != 99:
+                        st.success(f"📈 **PROMOTION ELIGIBLE:** {row['name']} has met their maximum quota of {limit} modules for {cat} and may be eligible for promotion.")
+                        has_alerts = True
+                        
+                if not has_alerts:
+                    st.info("✅ All staff workloads are within normal limits. No pending promotion quotas met.")
+                
+                st.divider()
+                # --- END OF SYSTEM ALERTS ---
+
                 # --- 1. GLOBAL SEMESTER FILTER ---
                 selected_semester = st.radio("⏳ Select Semester to Analyze:", ["Semester 1", "Semester 2"], horizontal=True, key="hod_sem")
                 st.divider()
