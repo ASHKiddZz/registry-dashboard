@@ -1,172 +1,88 @@
 #import of libraries to make app more efficient
 import streamlit as st
 import sqlite3
+from sqlalchemy import create_engine
 import pandas as pd
 import datetime
 import os
 import io
 from fpdf import FPDF
 
-#Database seeder using excel import
-DB_FILE = 'registry_database.db'
-
-if not os.path.exists(DB_FILE):
-    st.info("Initializing robust database from Excel template...")
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        xls = pd.ExcelFile('mock_university_database.xlsx')
-        
-        for sheet_name in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet_name)
-            
-            #To prevent app from crashing incase the excel doc is missing a column, it will instead create it and assign default value to it.
-            if sheet_name == 'Users':
-                if 'password' not in df.columns: df['password'] = 'Pass123!'
-                if 'hire_year' not in df.columns: df['hire_year'] = 2024
-                if 'category_level' not in df.columns: df['category_level'] = 'N/A'
-                
-            elif sheet_name == 'Modules':
-                if 'duration' not in df.columns: df['duration'] = 12
-                if 'practical_hours' not in df.columns: df['practical_hours'] = 0
-                if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
-
-            elif sheet_name == 'Modules':
-                if 'duration' not in df.columns: df['duration'] = 12
-                if 'practical_hours' not in df.columns: df['practical_hours'] = 0
-                if 'lecture_hours' not in df.columns: df['lecture_hours'] = 3
-            
-            #similarly if cohort column was not included in the imported excel doc then it will create it by default.
-            elif sheet_name == 'Allocations':
-                if 'cohort' not in df.columns: df['cohort'] = 'Group A' # Default cohort
-            
-            #It creates status and rejection_reason by default to avoid crash.
-            elif sheet_name == 'Pending_Promotions':
-                if 'status' not in df.columns: df['status'] = 'Pending HoD'
-                # --- ADD THIS LINE ---
-                if 'rejection_reason' not in df.columns: df['rejection_reason'] = ''
-                
-            # If the column exists, but the user left specific cells blank (NaN), we fill those blanks.
-            # First the columns that require numeric values need to be filled to a default value based on constraints given in scenarios.
-            if 'duration' in df.columns: df['duration'] = df['duration'].fillna(12)
-            if 'hire_year' in df.columns: df['hire_year'] = df['hire_year'].fillna(2024)
-            if 'cohort' in df.columns: df['cohort'] = df['cohort'].fillna('Group A')
-            
-            # Then, any other columns related to text that are blank are filled with the value unknown to avoid crashing of app.
-            df = df.fillna('Unknown') 
-            
-            # Save the clean, repaired dataframe to the SQL database
-            df.to_sql(sheet_name, conn, if_exists='replace', index=False)
-            
-        conn.commit()
-        conn.close()
-        st.success("Database successfully seeded and cleaned!")
-    except Exception as e:
-        st.error(f"Critical error seeding database: {e}")
-
-# This is setting up the registry page with it title and layout.
 st.set_page_config(page_title="Registry Workload System", layout="wide")
 
-# Sometimes when building up the database either some additional columns must be added at a later stage or the excel doc is missing those columns which are crucial to create the database.
-# Therefore this section is to add those missing columns in the database without having to redo everything.
+# --- THE MAGICAL CLOUD BRIDGE ---
+CLOUD_DB_URL = "postgresql://postgres.ttzgfkbtpxpkjslektkv:UTM89786756@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
-# Adding hire year with default value of 2023 if the column is missing within the database.
-patch_conn = sqlite3.connect('registry_database.db')
-try:
-    patch_conn.execute("ALTER TABLE Users ADD COLUMN hire_year INTEGER DEFAULT 2023")
-    patch_conn.commit()
-except sqlite3.OperationalError:
-    pass  #IF THE COLUMN ALREADY EXIST JUST PASS.
-patch_conn.close()
+@st.cache_resource
+def init_engine():
+    return create_engine(CLOUD_DB_URL)
 
-# Creating Pending promotion table and adding all its columns such as ticket_id, User_id, etc...
-patch_conn = sqlite3.connect('registry_database.db')
-patch_conn.execute('''
-    CREATE TABLE IF NOT EXISTS Pending_Promotions (
-        ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        proposed_role TEXT,
-        proposed_category TEXT,
-        status TEXT DEFAULT 'Pending HoD',
-        request_date DATE DEFAULT CURRENT_DATE
-    )
-''')
-patch_conn.commit()
-patch_conn.close()
+cloud_engine = init_engine()
 
-# Create Lecturer_Remarks table along with its contents in case if it doesnt exist for future excel document imports.
-patch_conn = sqlite3.connect('registry_database.db')
-patch_conn.execute('''
-    CREATE TABLE IF NOT EXISTS Lecturer_Remarks (
-        remark_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        remark_text TEXT,
-        status TEXT DEFAULT 'Unread',
-        submit_date DATE DEFAULT CURRENT_DATE
-    )
-''')
-patch_conn.commit()
-patch_conn.close()
+class CloudCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        
+    def execute(self, query, params=None):
+        # 1. Translate SQLite '?' to Postgres '%s'
+        query = query.replace('?', '%s') 
+        
+        # 2. THE FIX: Wrap table names in double quotes to force Case Sensitivity
+        # We replace " FROM Users " with " FROM \"Users\" "
+        tables = ["Users", "Modules", "Allocations", "Lecturer_Remarks", "Pending_Promotions"]
+        for table in tables:
+            # We look for the table name and wrap it in \"
+            query = query.replace(f" {table} ", f' "{table}" ')
+            query = query.replace(f"FROM {table}", f'FROM "{table}"')
+            query = query.replace(f"JOIN {table}", f'JOIN "{table}"')
+        
+        if params:
+            self.cursor.execute(query, params)
+        else:
+            self.cursor.execute(query)
+        return self
+        
+    def fetchone(self):
+        return self.cursor.fetchone()
+        
+    def fetchall(self):
+        return self.cursor.fetchall()
+        
+    @property
+    def description(self):
+        return self.cursor.description
+        
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
+        
+    def close(self):
+        self.cursor.close()
 
-# Making changes to the allocations table to add semester column with default value semester 1.
-patch_conn = sqlite3.connect('registry_database.db')
-try:
-    patch_conn.execute("ALTER TABLE Allocations ADD COLUMN semester TEXT DEFAULT 'Semester 1'")
-    patch_conn.commit()
-except sqlite3.OperationalError:
-    pass # Just pass if column already exists.
-patch_conn.close()
+class CloudConnection:
+    def __init__(self):
+        self.conn = cloud_engine.raw_connection()
+        
+    def cursor(self):
+        return CloudCursor(self.conn.cursor())
+        
+    def commit(self):
+        self.conn.commit()
+        
+    def rollback(self):
+        self.conn.rollback()
+        
+    def close(self):
+        self.conn.close()
 
-# Adding crucial data from Utm timetable excel document.
-patch_conn = sqlite3.connect('registry_database.db')
-new_columns = [
-    # Adding new columns to the User table based off timetable.
-    ("Users", "employment_type", "TEXT DEFAULT 'FT'"),
-    ("Users", "department", "TEXT DEFAULT 'Unassigned'"),
-    ("Users", "title", "TEXT DEFAULT ''"),
-    
-    #Adding new columns to the Modules table.
-    ("Modules", "programme", "TEXT DEFAULT 'General'"),
-    ("Modules", "weightage", "REAL DEFAULT 0"),
-    ("Modules", "programme_coordinator", "TEXT DEFAULT 'Unassigned'"),
-    
-    # Adding new columns to the Allocations table.
-    ("Allocations", "level_semester", "TEXT DEFAULT ''"),
-    ("Allocations", "students_count", "INTEGER DEFAULT 0")
-]
-# This small section is to ensure that anything missing column in a certain table is to added to avoid crashing the app.
-for table, col, dtype in new_columns:
-    try:
-        patch_conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dtype}")
-    except sqlite3.OperationalError:
-        pass # The column already exists, safely skip it!
-
-patch_conn.commit()
-patch_conn.close()
-
-# Making changes to the pending promotions table to add registration letter column for future use when sending registration letter for a promotion.
-patch_conn = sqlite3.connect('registry_database.db')
-try:
-    patch_conn.execute("ALTER TABLE Pending_Promotions ADD COLUMN registration_letter BLOB")
-    patch_conn.commit()
-except sqlite3.OperationalError:
-    pass # Skip if the column already exists within the table.
-patch_conn.close()
-
-# Adding tutorial hours and practical hours columns to the Modules table along with a default value of 0.
-patch_conn = sqlite3.connect('registry_database.db')
-try:
-    patch_conn.execute("ALTER TABLE Modules ADD COLUMN tutorial_hours INTEGER DEFAULT 0")
-    patch_conn.execute("ALTER TABLE Modules ADD COLUMN practical_hours INTEGER DEFAULT 0")
-    patch_conn.commit()
-except sqlite3.OperationalError:
-    pass # Skip if those columns already exist within the table.
-patch_conn.close()
+# The Secret Sauce: We hijack the local sqlite library to route directly to the cloud!
+sqlite3.connect = lambda *args, **kwargs: CloudConnection()
 
 # 2. Database Helper Function
 def verify_login(username, password):
     conn = sqlite3.connect('registry_database.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, name, role FROM Users WHERE name=? AND password=?", (username, password))
+    cursor.execute("SELECT user_id, name, role FROM Users WHERE username=? AND password=?", (username, password))
     user = cursor.fetchone()
     conn.close()
     return user
@@ -256,7 +172,7 @@ else:
             remarks_df = pd.read_sql_query("""
                 SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
                 FROM Lecturer_Remarks r
-                JOIN Users u ON r.user_id = u.user_id
+                JOIN "Users" u ON r.user_id = u.user_id
                 WHERE r.status = 'Unread'
             """, conn)
 
@@ -446,7 +362,7 @@ else:
             
             # To properly match the UTM timetable columns names, I had to rename the already written column names in the database.
             display_df = modules_df.rename(columns={
-                'module_id': 'Module Code',
+                'module_code': 'Module Code',
                 'module_name': 'Module Name',
                 'duration': 'Duration (Weeks)',
                 'lecture_hours': 'Lecture Hrs',
@@ -462,12 +378,12 @@ else:
             st.subheader("Edit or Delete Module")
             
             if not modules_df.empty:
-                module_list = modules_df['module_id'].astype(str) + " - " + modules_df['module_name']
+                module_list = modules_df['module_code'].astype(str) + " - " + modules_df['module_name']
                 selected_mod_str = st.selectbox("Select Module to Modify", module_list)
                 
                 if selected_mod_str:
                     selected_mod_id = selected_mod_str.split(" - ")[0]
-                    current_mod_data = modules_df[modules_df['module_id'] == selected_mod_id].iloc[0]
+                    current_mod_data = modules_df[modules_df['module_code'] == selected_mod_id].iloc[0]
                     
                     col1, col2 = st.columns(2)
                     with col1:
@@ -491,7 +407,7 @@ else:
                             cursor.execute('''
                                 UPDATE Modules 
                                 SET module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=? 
-                                WHERE module_id=?
+                                WHERE module_code=?
                             ''', (edit_m_name, edit_duration, edit_l_hrs, edit_t_hrs, edit_p_hrs, selected_mod_id))
                             conn.commit()
                             st.success("Module updated successfully!")
@@ -500,8 +416,8 @@ else:
                     with btn_col2:
                         if st.button("Delete Module", type="primary", use_container_width=True):
                             cursor = conn.cursor()
-                            cursor.execute("DELETE FROM Modules WHERE module_id=?", (selected_mod_id,))
-                            cursor.execute("DELETE FROM Allocations WHERE module_id=?", (selected_mod_id,))
+                            cursor.execute("DELETE FROM Modules WHERE module_code=?", (selected_mod_id,))
+                            cursor.execute("DELETE FROM Allocations WHERE module_code=?", (selected_mod_id,))
                             conn.commit()
                             st.warning("Module deleted from system!")
                             st.rerun()
@@ -571,17 +487,17 @@ else:
                                 try: prac_hours = int(row.get('Practical Hours (P)', 0))
                                 except: prac_hours = 0
                                 
-                                cursor.execute("SELECT * FROM Modules WHERE module_id=?", (code,))
+                                cursor.execute("SELECT * FROM Modules WHERE module_code=?", (code,))
                                 if cursor.fetchone():
                                     # This updates the already existing module.
                                     cursor.execute('''UPDATE Modules SET 
                                         module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=?, 
-                                        programme=?, programme_coordinator=?, weightage=? WHERE module_id=?''', 
+                                        programme=?, programme_coordinator=?, weightage=? WHERE module_code=?''', 
                                         (name, duration, hours, tut_hours, prac_hours, prog, coord, weight, code))
                                 else:
                                     # This creates a new module.
                                     cursor.execute('''INSERT INTO Modules 
-                                        (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
+                                        (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
                                         (code, name, duration, hours, tut_hours, prac_hours, prog, coord, weight))
                                 import_count += 1
@@ -612,7 +528,7 @@ else:
                 if submit_mod:
                     if m_id and m_name:
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO Modules (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours) VALUES (?, ?, ?, ?, ?, ?)", 
+                        cursor.execute("INSERT INTO Modules (module_code, module_name, tutorial_hours, practical_hours) VALUES (?, ?, ?, ?)", 
                                        (m_id, m_name, m_duration, l_hrs, t_hrs, p_hrs))
                         conn.commit()
                         st.success(f"Module {m_id} successfully added!")
@@ -636,7 +552,7 @@ else:
             
             # The workload calculator will now operate based off the selected semester.
             workload_query = """
-                SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
+                SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_code) as "Assigned Modules"
                 FROM Users u
                 LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
                 WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
@@ -672,10 +588,10 @@ else:
             st.markdown(f"### Detailed Master List ({selected_semester})")
             
             all_data = pd.read_sql_query("""
-                SELECT u.name as "Lecturer", a.module_id as "Module Code", m.module_name as "Module Title", a.cohort as "Cohort/Group", a.semester as "Semester"
+                SELECT u.name as "Lecturer", a.module_code as "Module Code", m.module_name as "Module Title", a.level_semester as "Cohort/Group", a.semester as "Semester"
                 FROM Allocations a
                 JOIN Users u ON a.user_id = u.user_id
-                JOIN Modules m ON a.module_id = m.module_id
+                JOIN Modules m ON a.module_code = m.module_code
                 WHERE a.semester = ?
             """, conn, params=(selected_semester,))
             
@@ -717,13 +633,13 @@ else:
                             st.session_state.saved_staff_index = 0
                             
                         selected_staff = st.selectbox("Select Staff Member", staff_list, index=st.session_state.saved_staff_index)
-                        mod_df = pd.read_sql_query("SELECT module_id, module_name FROM Modules", conn)
+                        mod_df = pd.read_sql_query("SELECT module_code, module_name FROM Modules", conn)
                         
                         if mod_df.empty:
                             st.warning("⚠️ No modules found.")
                             st.form_submit_button("Assign Module", disabled=True)
                         else:
-                            mod_list = mod_df['module_id'].astype(str) + " - " + mod_df['module_name']
+                            mod_list = mod_df['module_code'].astype(str) + " - " + mod_df['module_name']
                             selected_mod = st.selectbox("Select Module", mod_list)
                             
                             # Selecting between two semesters when assigning modules.
@@ -742,12 +658,12 @@ else:
                                 
                                 cursor = conn.cursor()
                                 # This checks if a lecturer is already teaching this particular module in the current semester.
-                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (s_id, m_id, assign_cohort, assign_semester))
+                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (s_id, m_id, assign_cohort, assign_semester))
                                 if cursor.fetchone():
                                     st.error(f"This person is already teaching {m_id} for {assign_cohort} in {assign_semester}!")
                                 else:
                                     # Insert the new record with the correct semester.
-                                    cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort, semester) VALUES (?, ?, ?, ?)", (s_id, m_id, assign_cohort, assign_semester))
+                                    cursor.execute("INSERT INTO Allocations (user_id, module_code, cohort, semester) VALUES (?, ?, ?, ?)", (s_id, m_id, assign_cohort, assign_semester))
                                     conn.commit()
                                     st.success(f"Assigned {m_id} ({assign_cohort}) to {assign_semester} successfully!")
                                     st.rerun()
@@ -757,14 +673,14 @@ else:
                 st.write("**Remove an Allocation**")
                 with st.form("remove_form"):
                     alloc_df = pd.read_sql_query("""
-                        SELECT a.user_id, u.name, a.module_id, m.module_name, a.cohort, a.semester
+                        SELECT a.user_id, u.name, a.module_code, m.module_name, a.level_semester, a.semester
                         FROM Allocations a
                         JOIN Users u ON a.user_id = u.user_id
-                        JOIN Modules m ON a.module_id = m.module_id
+                        JOIN Modules m ON a.module_code = m.module_code
                     """, conn)
                     
                     if not alloc_df.empty:
-                        alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_id'] + "|" + alloc_df['cohort'] + "|" + alloc_df['semester'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['cohort'] + ", " + alloc_df['semester'] + ")"
+                        alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_code'] + "|" + alloc_df['level_semester'] + "|" + alloc_df['semester'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['level_semester'] + ", " + alloc_df['semester'] + ")"
                         selected_alloc = st.selectbox("Select Assignment to Remove", alloc_list)
                         
                         submit_remove = st.form_submit_button("Remove Allocation", type="primary", use_container_width=True)
@@ -774,7 +690,7 @@ else:
                             r_uid, r_mid, r_cohort, r_semester = int(keys[0]), keys[1], keys[2], keys[3]
                             
                             cursor = conn.cursor()
-                            cursor.execute("DELETE FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (r_uid, r_mid, r_cohort, r_semester))
+                            cursor.execute("DELETE FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (r_uid, r_mid, r_cohort, r_semester))
                             conn.commit()
                             st.success("Allocation removed successfully!")
                             st.rerun()
@@ -852,7 +768,7 @@ else:
                                 mod_code = str(row[col_module]).strip()
                                 mod_title = str(row.get(col_mod_title, 'Unknown')).strip()
                                 
-                                # --- THE FIX 1: Catch Pandas 'nan' from blank Excel cells ---
+                                # Rmoved the Nan default value assigned by Pandas to something more streamline to the UTM's timetable
                                 if mod_title.lower() == 'nan':
                                     mod_title = 'Unknown Title'
                                     
@@ -862,14 +778,14 @@ else:
                                 coord = str(row.get(col_coord, 'Unassigned')).strip()
                                 ftpt = str(row.get(col_ftpt, 'FT')).strip()
                                 
-                                # Safely convert numbers
+                                # convertion of numbers in a safe way
                                 try: weight = float(row.get(col_weight, 0))
                                 except: weight = 0.0
                                 
                                 try: students = int(row.get(col_students, 0))
                                 except: students = 0
                                 
-                                # 3. Smart Semester Detection
+                                # A feature to know which semester we are in and sort in two separate semesters overview.
                                 level_sem = str(row[col_level]).upper()
                                 if "UTM" in format_choice:
                                     semester = "Semester 2" if 'S2' in level_sem else "Semester 1"
@@ -878,26 +794,24 @@ else:
                                 
                                 # Added changes to update database since there were missing factors from the timetable
                                 
-                                # Step A: Enrich Module Data (Insert if missing, Update if exists)
-                                cursor.execute("SELECT module_id, module_name FROM Modules WHERE module_id=?", (mod_code,))
+                                # Filling the empty slots with default values and update already existing ones.
+                                cursor.execute("SELECT module_code, module_name FROM Modules WHERE module_code=?", (mod_code,))
                                 existing_mod = cursor.fetchone()
                                 
                                 if existing_mod:
-                                    # THE FIX 2: Auto-correct the name if it was previously corrupted by 'nan'
+                                    # Fixing the nan error occured in Name column.
                                     if str(existing_mod[1]).lower() == 'nan' and mod_title != 'Unknown Title':
-                                        cursor.execute("UPDATE Modules SET module_name=?, programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (mod_title, prog, weight, coord, mod_code))
+                                        cursor.execute("UPDATE Modules SET module_name=?, programme=?, weightage=?, programme_coordinator=? WHERE module_code=?", (mod_title, prog, weight, coord, mod_code))
                                     else:
-                                        cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_id=?", (prog, weight, coord, mod_code))
+                                        cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_code=?", (prog, weight, coord, mod_code))
                                 else:
-                                    # THE FIX 3: Default hours inserted so Tab 2 never shows 'None' again!
+                                    # Adding default values for hours instead of saying none.
                                     cursor.execute("""
-                                        INSERT INTO Modules (module_id, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, weightage, programme_coordinator) 
+                                        INSERT INTO Modules (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, weightage, programme_coordinator) 
                                         VALUES (?, ?, 15, 3, 0, 0, ?, ?, ?)
                                     """, (mod_code, mod_title, prog, weight, coord))
 
-                                # Step B: Match User and Enrich Profile
-
-                                # Step B: Match User and Enrich Profile
+                                # Step B: Match User and Enrich Profile 
                                 cursor.execute("SELECT user_id FROM Users WHERE name LIKE ?", (f"%{staff_name}%",))
                                 user_result = cursor.fetchone()
                                 
@@ -908,9 +822,9 @@ else:
                                     cursor.execute("UPDATE Users SET department=?, title=?, employment_type=? WHERE user_id=?", (dept, title, ftpt, s_id))
                                     
                                     # Step C: Log the Allocation with Student Counts
-                                    cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_id=? AND cohort=? AND semester=?", (s_id, mod_code, cohort, semester))
+                                    cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (s_id, mod_code, cohort, semester))
                                     if not cursor.fetchone():
-                                        cursor.execute("INSERT INTO Allocations (user_id, module_id, cohort, semester, level_semester, students_count) VALUES (?, ?, ?, ?, ?, ?)", (s_id, mod_code, cohort, semester, level_sem, students))
+                                        cursor.execute("INSERT INTO Allocations (user_id, module_code, level_semester, semester, students_count) VALUES (?, ?, ?, ?, ?)", (s_id, mod_code, level_sem, semester, students))
                                         alloc_count += 1
                                 else:
                                     missing_staff.add(staff_name)
@@ -944,12 +858,12 @@ else:
                 radar_df = pd.read_sql_query(f"""
                     SELECT u.name as "Staff Member", u.role as "Current Role", 
                            ({current_yr} - u.hire_year) as "Years Served", 
-                           COUNT(a.module_id) as "Active Modules"
+                           COUNT(a.module_code) as "Active Modules"
                     FROM Users u
                     LEFT JOIN Allocations a ON u.user_id = a.user_id
                     WHERE u.category_level IN ('Category 5 (Other Academic)', 'Category 4 (PhD Staff)')
-                    GROUP BY u.user_id
-                    HAVING "Years Served" >= 3 AND "Active Modules" >= 3
+                    GROUP BY u.user_id, u.name, u.role, u.category_level, u.hire_year
+                    HAVING (2026 - u.hire_year) >= 3 AND COUNT(a.module_code) >= 2
                 """, conn)
                 
                 if radar_df.empty:
@@ -1046,10 +960,9 @@ else:
                                       conn, params=(st.session_state.user_id,)).iloc[0]
         
         my_modules = pd.read_sql_query("""
-            SELECT m.module_id as "Code", m.module_name as "Module Title", 
-                   m.lecture_hours as "L", m.practical_hours as "P"
+            SELECT m.module_code as "Code", m.module_name as "Module Title", m.programme as "Programme", m.programme_coordinator as "Coordinator", m.weightage as "Weightage", m.lecture_hours as "L", m.tutorial_hours as "T", m.practical_hours as "P"
             FROM Allocations a
-            JOIN Modules m ON a.module_id = m.module_id
+            JOIN Modules m ON a.module_code = m.module_code
             WHERE a.user_id = ?
         """, conn, params=(st.session_state.user_id,))
         
@@ -1209,17 +1122,17 @@ else:
         # UPGRADED SQL: Now fetches Programme, Coordinator, Lecture Hours, and FT/PT!
         my_modules_query = """
             SELECT a.semester as "Semester", 
-                   a.module_id as "Module Code", 
+                   a.module_code as "Module Code", 
                    m.module_name as "Module Title", 
                    m.programme as "Programme",
-                   a.cohort as "Cohort", 
+                   a.level_semester as "Cohort", 
                    u.employment_type as "FT/PT",
                    m.lecture_hours as "L. Hrs",
                    a.students_count as "Students", 
                    m.weightage as "Weightage",
                    m.programme_coordinator as "Coordinator"
             FROM Allocations a
-            JOIN Modules m ON a.module_id = m.module_id
+            JOIN Modules m ON a.module_code = m.module_code
             JOIN Users u ON a.user_id = u.user_id
             WHERE a.user_id = ?
             ORDER BY a.semester DESC
@@ -1372,7 +1285,7 @@ else:
                 # --- NEW: SYSTEM ALERTS (QUOTAS & PROMOTIONS) ---
                 # We use the exact same SQL logic as the Registry to guarantee matching math
                 alert_query = """
-                    SELECT u.name as "Staff Member", u.category_level as "Category", COUNT(a.module_id) as "Assigned Modules"
+                    SELECT u.name as "Staff Member", u.category_level as "Category", COUNT(a.module_code) as "Assigned Modules"
                     FROM Users u
                     LEFT JOIN Allocations a ON u.user_id = a.user_id
                     WHERE u.role != 'Registry Officer'
@@ -1443,9 +1356,9 @@ else:
                 staff_count = conn.execute("SELECT COUNT(*) FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')").fetchone()[0]
                 
                 sem_stats = conn.execute("""
-                    SELECT COUNT(a.module_id), SUM(a.students_count), SUM(m.weightage)
+                    SELECT COUNT(a.module_code, SUM(a.students_count), SUM(m.weightage)
                     FROM Allocations a
-                    JOIN Modules m ON a.module_id = m.module_id
+                    JOIN Modules m ON a.module_code = m.module_code
                     WHERE a.semester = ?
                 """, (selected_semester,)).fetchone()
                 
@@ -1467,11 +1380,11 @@ else:
                 # Upgraded SQL: Now pulls the new UTM data but filters by the radio button!
                 alloc_df = pd.read_sql_query("""
                     SELECT u.name as "Lecturer", u.employment_type as "FT/PT", 
-                           a.module_id as "Module Code", m.module_name as "Module Title", 
-                           a.cohort as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
+                           a.module_code as "Module Code", m.module_name as "Module Title", 
+                           a.level_semester as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
                     FROM Allocations a
                     JOIN Users u ON a.user_id = u.user_id
-                    JOIN Modules m ON a.module_id = m.module_id
+                    JOIN Modules m ON a.module_code = m.module_code
                     WHERE a.semester = ?
                 """, conn, params=(selected_semester,))
                 
@@ -1608,7 +1521,7 @@ else:
                 
                 # Upgraded Query: Added a.semester to the SELECT and GROUP BY to enable the dual-color split
                 chart_query = """
-                    SELECT u.name as "Staff Member", a.semester, COUNT(a.module_id) as "Module Count"
+                    SELECT u.name as "Staff Member", a.semester, COUNT(a.module_code) as "Module Count"
                     FROM Users u
                     JOIN Allocations a ON u.user_id = a.user_id
                     WHERE u.category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')
@@ -1653,7 +1566,7 @@ else:
                 prog_count = conn.execute("SELECT COUNT(DISTINCT programme) FROM Modules WHERE programme != 'General'").fetchone()[0]
                 
                 school_stats = conn.execute("""
-                    SELECT COUNT(a.module_id), SUM(a.students_count)
+                    SELECT COUNT(a.module_code), SUM(a.students_count)
                     FROM Allocations a
                     WHERE a.semester = ?
                 """, (selected_semester,)).fetchone()
@@ -1675,12 +1588,12 @@ else:
                     SELECT 
                         u.department as "Department",
                         COUNT(DISTINCT u.user_id) as "Staff Count",
-                        COUNT(a.module_id) as "Modules Taught",
+                        COUNT(a.module_code) as "Modules Taught",
                         SUM(a.students_count) as "Total Students",
                         SUM(m.weightage) as "Total Weightage"
                     FROM Users u
                     LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
-                    LEFT JOIN Modules m ON a.module_id = m.module_id
+                    LEFT JOIN Modules m ON a.module_code = m.module_code
                     WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD')
                     AND u.department != 'Unassigned'
                     GROUP BY u.department
@@ -1818,7 +1731,7 @@ else:
                 # 3. Detailed Breakdown Table (Bottom Row)
                 st.write("### Department Workload Breakdown")
                 workload_df = pd.read_sql_query("""
-                    SELECT u.name as "Staff Name", u.role as "Role", COUNT(a.module_id) as "Assigned Modules"
+                    SELECT u.name as "Staff Name", u.role as "Role", COUNT(a.module_code) as "Assigned Modules"
                     FROM Users u
                     LEFT JOIN Allocations a ON u.user_id = a.user_id
                     WHERE u.role != 'Registry Officer'
