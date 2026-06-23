@@ -216,12 +216,17 @@ else:
             # This section allows the Admin to edit and delete Users within the database.
             st.subheader("Edit or Delete Staff")
             
-            # This creates a drop down user list also listing the names of the users with their id.
-            user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
-            selected_user_str = st.selectbox("Select User to Modify", user_list)
-            
-            if selected_user_str:
-                # It only outputs the id of the selected user.
+            # 1. First check if the database is completely empty
+            if users_df.empty:
+                st.info("No staff members found. Please use the Bulk Import tab to add staff!")
+                st.stop() 
+
+                # 2. If it's not empty, build the dropdown normally
+                # This creates a drop down user list also listing the names of the users with their id.
+                user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
+                selected_user_str = st.selectbox("Select User to Modify", user_list)
+
+            # 3. Get the ID (No 'if' needed here anymore)
                 selected_id = int(selected_user_str.split(" - ")[0])
                 
                 # Grab that specific user's current data to fill the default values
