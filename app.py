@@ -207,8 +207,12 @@ else:
         
         with tab1:
             st.subheader("Current System Users")
-            conn = sqlite3.connect('registry_database.db')
-            users_df = pd.read_sql_query("SELECT user_id, name, role, category_level FROM Users", conn)
+            
+            # --- 1. FIXED: Connect to Cloud Database instead of local SQLite ---
+            conn = cloud_engine.raw_connection()
+            
+            # FIXED: Added quotes around "Users" for Postgres case-sensitivity
+            users_df = pd.read_sql_query('SELECT user_id, name, role, category_level FROM "Users"', conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
             
             st.divider()
@@ -221,64 +225,63 @@ else:
                 st.info("No staff members found. Please use the Bulk Import tab to add staff!")
                 st.stop() 
 
-                # 2. If it's not empty, build the dropdown normally
-                # This creates a drop down user list also listing the names of the users with their id.
-                user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
-                selected_user_str = st.selectbox("Select User to Modify", user_list)
+            # --- 2. FIXED INDENTATION: Pulled back out of the 'if' statement ---
+            # This creates a drop down user list also listing the names of the users with their id.
+            user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
+            selected_user_str = st.selectbox("Select User to Modify", user_list)
 
             # 3. Get the ID (No 'if' needed here anymore)
-                selected_id = int(selected_user_str.split(" - ")[0])
+            selected_id = int(selected_user_str.split(" - ")[0])
+            
+            # Grab that specific user's current data to fill the default values
+            current_data = users_df[users_df['user_id'] == selected_id].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # The Users' name is what they will use to login as their username.
+                edit_name = st.text_input("Update Name (Username)", value=current_data['name'])
                 
-                # Grab that specific user's current data to fill the default values
-                current_data = users_df[users_df['user_id'] == selected_id].iloc[0]
+                roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
+                current_role = current_data['role']
+                role_index = roles.index(current_role) if current_role in roles else 0
+                edit_role = st.selectbox("Update Role", roles, index=role_index)
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    # The Users' name is what they will use to login as their username.
-                    edit_name = st.text_input("Update Name (Username)", value=current_data['name'])
+            with col2:
+                levels = ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"]
+                current_level = current_data['category_level']
+                level_index = levels.index(current_level) if current_level in levels else 0
+                edit_level = st.selectbox("Update Category", levels, index=level_index)
+                
+                # This is a feature that allows a password reset incase they forget their password.
+                edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
+                
+            st.write("Actions:")
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                if st.button("Update User", use_container_width=True):
+                    cursor = conn.cursor()
+                    # --- 3. FIXED: Changed ? to %s and wrapped table in quotes ---
+                    if edit_password: 
+                        cursor.execute('UPDATE "Users" SET name=%s, role=%s, category_level=%s, password=%s WHERE user_id=%s', 
+                                       (edit_name, edit_role, edit_level, edit_password, selected_id))
+                    else: 
+                        cursor.execute('UPDATE "Users" SET name=%s, role=%s, category_level=%s WHERE user_id=%s', 
+                                       (edit_name, edit_role, edit_level, selected_id))
+                    conn.commit()
+                    st.success(f"User updated successfully!")
+                    st.rerun()
                     
-                    roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
-                    current_role = current_data['role']
-                    role_index = roles.index(current_role) if current_role in roles else 0
-                    edit_role = st.selectbox("Update Role", roles, index=role_index)
-                    
-                with col2:
-                    levels = ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"]
-                    current_level = current_data['category_level']
-                    level_index = levels.index(current_level) if current_level in levels else 0
-                    edit_level = st.selectbox("Update Category", levels, index=level_index)
-                    
-                    # This is a feature that allows a password reset incase they forget their password.
-                    edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
-                    
-                st.write("Actions:")
-                btn_col1, btn_col2 = st.columns(2)
-                with btn_col1:
-                    if st.button("Update User", use_container_width=True):
+            with btn_col2:
+                if st.button("Delete User", type="primary", use_container_width=True):
+                    if selected_id == 1:
+                        st.error("Security Alert: You cannot delete the master Super Admin account!")
+                    else:
                         cursor = conn.cursor()
-                        # If the admin were to type a new password, then everything will require to be updated.
-                        if edit_password: 
-                            cursor.execute("UPDATE Users SET name=?, role=?, category_level=?, password=? WHERE user_id=?", 
-                                           (edit_name, edit_role, edit_level, edit_password, selected_id))
-                        # If no new password was typed in the blank space, then everything except the password would be updated.
-                        else: 
-                            cursor.execute("UPDATE Users SET name=?, role=?, category_level=? WHERE user_id=?", 
-                                           (edit_name, edit_role, edit_level, selected_id))
+                        cursor.execute('DELETE FROM "Users" WHERE user_id=%s', (selected_id,))
+                        cursor.execute('DELETE FROM "Allocations" WHERE user_id=%s', (selected_id,))
                         conn.commit()
-                        st.success(f"User updated successfully!")
+                        st.warning(f"User deleted from system!")
                         st.rerun()
-                        
-                with btn_col2:
-                    if st.button("Delete User", type="primary", use_container_width=True):
-                        if selected_id == 1:
-                            st.error("Security Alert: You cannot delete the master Super Admin account!")
-                        else:
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM Users WHERE user_id=?", (selected_id,))
-                            cursor.execute("DELETE FROM Allocations WHERE user_id=?", (selected_id,))
-                            conn.commit()
-                            st.warning(f"User deleted from system!")
-                            st.rerun()
 
             st.divider()
             
@@ -300,65 +303,66 @@ else:
                 if submit_user:
                     if new_name and new_pass:
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO Users (name, role, category_level, password, hire_year) VALUES (?, ?, ?, ?, ?)", 
+                        cursor.execute('INSERT INTO "Users" (name, role, category_level, password, hire_year) VALUES (%s, %s, %s, %s, %s)', 
                                        (new_name, new_role, new_level, new_pass, new_hire_year))
                         conn.commit()
                         st.success(f"Account created for {new_name}!")
                         st.rerun()
                     else:
                         st.error("Please fill out the Name and Password fields.")
-            conn.close()
-        
-        # This creates a fine line between each section to make it appear more clean.
-        st.divider()
-        st.subheader("📥 Bulk Import Staff (Annex Upload)")
+            
+            # This creates a fine line between each section to make it appear more clean.
+            st.divider()
+            st.subheader("📥 Bulk Import Staff (Annex Upload)")
 
-        # This is the rectangular box where you can drag and drop files that needs to be imported on the database.
-        uploaded_file = st.file_uploader("Upload staff list (CSV or Excel)", type=['csv', 'xlsx'])
+            # This is the rectangular box where you can drag and drop files that needs to be imported on the database.
+            uploaded_file = st.file_uploader("Upload staff list (CSV or Excel)", type=['csv', 'xlsx'])
 
-        if uploaded_file is not None:
-            # It will read the file into Pandas.
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    import_df = pd.read_csv(uploaded_file)
-                else:
-                    import_df = pd.read_excel(uploaded_file)
-                # When the excel document is uploaded, a small preview wil be displayed with the first 3 rows showing on the overview table.
-                st.write("Preview of uploaded document:")
-                st.dataframe(import_df.head(3))
-
-                # This is the import button feature to register all data on the imported document to the database.
-                if st.button("Process & Import Users"):
-                    cursor = conn.cursor()
-                    added_count = 0
-                    skipped_count = 0
-
-                    for index, row in import_df.iterrows():
-                        staff_name = str(row.get('Name', '')).strip()
-                        staff_role = str(row.get('Role', '')).strip()
-                        category = str(row.get('Category_Level', 'N/A')).strip()
-
-                        if staff_name and staff_name != 'nan':
-
-                            # Check if this person is already in the database.
-                            cursor.execute("SELECT * FROM Users WHERE name=?", (staff_name,))
-                            if not cursor.fetchone():
-                                # This is creates the account of the user with a default password which they can later change once they login on their dashboard.
-                                cursor.execute("INSERT INTO Users (name, role, category_level, password) VALUES (?, ?, ?, ?)",
-                                               (staff_name, staff_role, category, 'welcome123'))
-                                added_count += 1
-                            else:
-                                skipped_count += 1 # This skips the whole code if the user already exists within the database.
-
-                    conn.commit()
-
-                    if added_count > 0:
-                        st.success(f"✅ Successfully imported {added_count} new users! (Skipped {skipped_count} duplicates)")
+            if uploaded_file is not None:
+                # It will read the file into Pandas.
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        import_df = pd.read_csv(uploaded_file)
                     else:
-                        st.warning(f"⚠️ No new users added. All {skipped_count} people were already in the system.")
+                        import_df = pd.read_excel(uploaded_file)
+                    # When the excel document is uploaded, a small preview wil be displayed with the first 3 rows showing on the overview table.
+                    st.write("Preview of uploaded document:")
+                    st.dataframe(import_df.head(3))
 
-            except Exception as e:
-                st.error(f"Could not read the file. Error: {e}")
+                    # This is the import button feature to register all data on the imported document to the database.
+                    if st.button("Process & Import Users"):
+                        cursor = conn.cursor()
+                        added_count = 0
+                        skipped_count = 0
+
+                        for index, row in import_df.iterrows():
+                            staff_name = str(row.get('Name', '')).strip()
+                            staff_role = str(row.get('Role', '')).strip()
+                            category = str(row.get('Category_Level', 'N/A')).strip()
+
+                            if staff_name and staff_name != 'nan':
+
+                                # Check if this person is already in the database.
+                                cursor.execute('SELECT * FROM "Users" WHERE name=%s', (staff_name,))
+                                if not cursor.fetchone():
+                                    # This is creates the account of the user with a default password which they can later change once they login on their dashboard.
+                                    cursor.execute('INSERT INTO "Users" (name, role, category_level, password) VALUES (%s, %s, %s, %s)',
+                                                   (staff_name, staff_role, category, 'welcome123'))
+                                    added_count += 1
+                                else:
+                                    skipped_count += 1 # This skips the whole code if the user already exists within the database.
+
+                        conn.commit()
+
+                        if added_count > 0:
+                            st.success(f"✅ Successfully imported {added_count} new users! (Skipped {skipped_count} duplicates)")
+                        else:
+                            st.warning(f"⚠️ No new users added. All {skipped_count} people were already in the system.")
+
+                except Exception as e:
+                    st.error(f"Could not read the file. Error: {e}")
+                    
+            conn.close()
 
         with tab2:
             st.subheader("University Modules Database")
