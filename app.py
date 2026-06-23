@@ -400,7 +400,8 @@ else:
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
                         
                         # .get() safely pulls the number, or defaults to the second number if missing.
-                        default_dur = int(current_mod_data.get('duration', 12))
+                        raw_dur = current_mod_data.get('duration')
+                        default_dur = 12 if pd.isna(raw_dur) else int(raw_dur)
                         edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
                         
                     with col2:
