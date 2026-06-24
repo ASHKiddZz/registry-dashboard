@@ -208,11 +208,10 @@ else:
         with tab1:
             st.subheader("Current System Users")
             
-            # --- 1. FIXED: Connect to Cloud Database instead of local SQLite ---
             conn = cloud_engine.raw_connection()
             
-            # FIXED: Added quotes around "Users" for Postgres case-sensitivity
-            users_df = pd.read_sql_query('SELECT user_id, name, role, category_level FROM "Users"', conn)
+            # --- 1. FIXED: Added 'username' to the SELECT query so we can edit it ---
+            users_df = pd.read_sql_query('SELECT user_id, name, username, role, category_level FROM "Users"', conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
             
             st.divider()
@@ -225,12 +224,11 @@ else:
                 st.info("No staff members found. Please use the Bulk Import tab to add staff!")
                 st.stop() 
 
-            # --- 2. FIXED INDENTATION: Pulled back out of the 'if' statement ---
             # This creates a drop down user list also listing the names of the users with their id.
             user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
             selected_user_str = st.selectbox("Select User to Modify", user_list)
 
-            # 3. Get the ID (No 'if' needed here anymore)
+            # 3. Get the ID 
             selected_id = int(selected_user_str.split(" - ")[0])
             
             # Grab that specific user's current data to fill the default values
@@ -238,8 +236,12 @@ else:
             
             col1, col2 = st.columns(2)
             with col1:
-                # The Users' name is what they will use to login as their username.
-                edit_name = st.text_input("Update Name (Username)", value=current_data['name'])
+                edit_name = st.text_input("Update Full Name", value=current_data['name'])
+                
+                # --- 2. FIXED: Dedicated Username input (safely handles NULL values) ---
+                raw_user = current_data.get('username')
+                safe_username = "" if pd.isna(raw_user) else str(raw_user)
+                edit_username = st.text_input("Update Username (Login ID)", value=safe_username)
                 
                 roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
                 current_role = current_data['role']
@@ -260,13 +262,13 @@ else:
             with btn_col1:
                 if st.button("Update User", use_container_width=True):
                     cursor = conn.cursor()
-                    # --- 3. FIXED: Changed ? to %s and wrapped table in quotes ---
+                    # --- 3. FIXED: SQL Queries now update the 'username' column ---
                     if edit_password: 
-                        cursor.execute('UPDATE "Users" SET name=%s, role=%s, category_level=%s, password=%s WHERE user_id=%s', 
-                                       (edit_name, edit_role, edit_level, edit_password, selected_id))
+                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, category_level=%s, password=%s WHERE user_id=%s', 
+                                       (edit_name, edit_username, edit_role, edit_level, edit_password, selected_id))
                     else: 
-                        cursor.execute('UPDATE "Users" SET name=%s, role=%s, category_level=%s WHERE user_id=%s', 
-                                       (edit_name, edit_role, edit_level, selected_id))
+                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, category_level=%s WHERE user_id=%s', 
+                                       (edit_name, edit_username, edit_role, edit_level, selected_id))
                     conn.commit()
                     st.success(f"User updated successfully!")
                     st.rerun()
@@ -289,6 +291,10 @@ else:
             st.subheader("Register New Staff Member")
             with st.form("add_user_form", clear_on_submit=True):
                 new_name = st.text_input("Full Name")
+                
+                # --- 4. FIXED: Added Username field to the registration form ---
+                new_username = st.text_input("Username (Login ID)")
+                
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
                 new_level = st.selectbox("Category Limit", ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"])
     
@@ -301,18 +307,20 @@ else:
                 submit_user = st.form_submit_button("Create Account")
 
                 if submit_user:
-                    if new_name and new_pass:
+                    # --- 5. FIXED: Ensure username is filled out before saving ---
+                    if new_name and new_username and new_pass:
                         cursor = conn.cursor()
-                        cursor.execute('INSERT INTO "Users" (name, role, category_level, password, hire_year) VALUES (%s, %s, %s, %s, %s)', 
-                                       (new_name, new_role, new_level, new_pass, new_hire_year))
+                        # --- 6. FIXED: INSERT query now pushes the username to the database ---
+                        cursor.execute('INSERT INTO "Users" (name, username, role, category_level, password, hire_year) VALUES (%s, %s, %s, %s, %s, %s)', 
+                                       (new_name, new_username, new_role, new_level, new_pass, new_hire_year))
                         conn.commit()
                         st.success(f"Account created for {new_name}!")
                         st.rerun()
                     else:
-                        st.error("Please fill out the Name and Password fields.")
+                        st.error("Please fill out the Name, Username, and Password fields.")
             
-            # This creates a fine line between each section to make it appear more clean.
             st.divider()
+            # ... (Bulk Import Staff section remains completely unchanged below this!) ...
             st.subheader("📥 Bulk Import Staff (Annex Upload)")
 
             # This is the rectangular box where you can drag and drop files that needs to be imported on the database.
