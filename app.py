@@ -546,7 +546,7 @@ else:
                 if submit_mod:
                     if m_id and m_name:
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO Modules (module_code, module_name, tutorial_hours, practical_hours) VALUES (?, ?, ?, ?)", 
+                        cursor.execute('INSERT INTO "Modules" (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours) VALUES (%s, %s, %s, %s, %s, %s)', 
                                        (m_id, m_name, m_duration, l_hrs, t_hrs, p_hrs))
                         conn.commit()
                         st.success(f"Module {m_id} successfully added!")
