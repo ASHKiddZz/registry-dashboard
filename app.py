@@ -374,8 +374,10 @@ else:
 
         with tab2:
             st.subheader("University Modules Database")
-            conn = sqlite3.connect('registry_database.db')
-            modules_df = pd.read_sql_query("SELECT * FROM Modules", conn)
+            
+            # 1. FIXED: Connect to Cloud Database
+            conn = cloud_engine.raw_connection()
+            modules_df = pd.read_sql_query('SELECT * FROM "Modules"', conn)
             
             # To properly match the UTM timetable columns names, I had to rename the already written column names in the database.
             display_df = modules_df.rename(columns={
@@ -391,7 +393,9 @@ else:
             
             st.divider()
             
-            # This is the section where to admin can manually add or edit modules.
+            # ==========================================
+            # EDIT OR DELETE MODULE SECTION
+            # ==========================================
             st.subheader("Edit or Delete Module")
             
             if not modules_df.empty:
@@ -402,31 +406,49 @@ else:
                     selected_mod_id = selected_mod_str.split(" - ")[0]
                     current_mod_data = modules_df[modules_df['module_code'] == selected_mod_id].iloc[0]
                     
-                    col1, col2 = st.columns(2)
+                    # --- FIXED: Safely extract new data, handling NULLs ---
+                    safe_dept = "" if pd.isna(current_mod_data.get('department')) else str(current_mod_data.get('department'))
+                    safe_prog = "" if pd.isna(current_mod_data.get('programme')) else str(current_mod_data.get('programme'))
+                    safe_coord = "" if pd.isna(current_mod_data.get('programme_coordinator')) else str(current_mod_data.get('programme_coordinator'))
+                    safe_cred = 0 if pd.isna(current_mod_data.get('credits')) else int(current_mod_data.get('credits'))
+                    safe_weight = 100.0 if pd.isna(current_mod_data.get('weightage')) else float(current_mod_data.get('weightage'))
+                    
+                    st.info(f"Editing Module Code: **{selected_mod_id}**")
+                    
+                    # --- FIXED: 3-Column Layout with ALL fields ---
+                    col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.info(f"Editing Module Code: **{selected_mod_id}**")
                         edit_m_name = st.text_input("Update Module Name", value=current_mod_data['module_name'])
                         
-                        # .get() safely pulls the number, or defaults to the second number if missing.
                         raw_dur = current_mod_data.get('duration')
                         default_dur = 12 if pd.isna(raw_dur) else int(raw_dur)
                         edit_duration = st.number_input("Update Duration (Weeks)", min_value=1, value=default_dur)
+                        
+                        edit_dept = st.text_input("Department", value=safe_dept)
+                        edit_prog = st.text_input("Programme", value=safe_prog)
                         
                     with col2:
                         edit_l_hrs = st.number_input("Update Lecture Hours (L)", min_value=0, value=int(current_mod_data.get('lecture_hours', 3)))
                         edit_t_hrs = st.number_input("Update Tutorial Hours (T)", min_value=0, value=int(current_mod_data.get('tutorial_hours', 0)))
                         edit_p_hrs = st.number_input("Update Practical Hours (P)", min_value=0, value=int(current_mod_data.get('practical_hours', 0)))
                         
+                    with col3:
+                        edit_coord = st.text_input("Programme Coordinator", value=safe_coord)
+                        edit_cred = st.number_input("Credits", value=safe_cred)
+                        edit_weight = st.number_input("Weightage (%)", value=safe_weight)
+                        
                     st.write("Actions:")
                     btn_col1, btn_col2 = st.columns(2)
                     with btn_col1:
                         if st.button("Update Module", use_container_width=True):
                             cursor = conn.cursor()
+                            # FIXED: Postgres Syntax and all 11 columns
                             cursor.execute('''
-                                UPDATE Modules 
-                                SET module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=? 
-                                WHERE module_code=?
-                            ''', (edit_m_name, edit_duration, edit_l_hrs, edit_t_hrs, edit_p_hrs, selected_mod_id))
+                                UPDATE "Modules" 
+                                SET module_name=%s, duration=%s, lecture_hours=%s, tutorial_hours=%s, practical_hours=%s, 
+                                    department=%s, programme=%s, programme_coordinator=%s, credits=%s, weightage=%s
+                                WHERE module_code=%s
+                            ''', (edit_m_name, edit_duration, edit_l_hrs, edit_t_hrs, edit_p_hrs, edit_dept, edit_prog, edit_coord, edit_cred, edit_weight, selected_mod_id))
                             conn.commit()
                             st.success("Module updated successfully!")
                             st.rerun()
@@ -434,15 +456,17 @@ else:
                     with btn_col2:
                         if st.button("Delete Module", type="primary", use_container_width=True):
                             cursor = conn.cursor()
-                            cursor.execute("DELETE FROM Modules WHERE module_code=?", (selected_mod_id,))
-                            cursor.execute("DELETE FROM Allocations WHERE module_code=?", (selected_mod_id,))
+                            cursor.execute('DELETE FROM "Modules" WHERE module_code=%s', (selected_mod_id,))
+                            cursor.execute('DELETE FROM "Allocations" WHERE module_code=%s', (selected_mod_id,))
                             conn.commit()
                             st.warning("Module deleted from system!")
                             st.rerun()
 
             st.divider()
             
-            # This is an updated version of the bulk import document, this one was designed to bypass the format error within UTM's timetable, there is one standard format and one to skip the rows error format.
+            # ==========================================
+            # BULK IMPORT SECTION
+            # ==========================================
             st.subheader("📥 Bulk Import / Update Modules")
             st.info("Upload a standard module list or the official UTM timetable to auto-update module records.")
             
@@ -483,10 +507,8 @@ else:
                                 code = str(row[col_code]).strip()
                                 name = str(row[col_name]).strip()
                                 
-                                # Incase the row is empty it will safely skip it proceeding with the extraction.
                                 if code == 'nan' or code == '': continue
                                 
-                                # Safe extraction with .get() (won't crash if columns are missing)
                                 prog = str(row.get(col_prog, 'General')).strip()
                                 coord = str(row.get(col_coord, 'Unassigned')).strip()
                                 
@@ -505,18 +527,17 @@ else:
                                 try: prac_hours = int(row.get('Practical Hours (P)', 0))
                                 except: prac_hours = 0
                                 
-                                cursor.execute("SELECT * FROM Modules WHERE module_code=?", (code,))
+                                # FIXED: Postgres %s Syntax
+                                cursor.execute('SELECT * FROM "Modules" WHERE module_code=%s', (code,))
                                 if cursor.fetchone():
-                                    # This updates the already existing module.
-                                    cursor.execute('''UPDATE Modules SET 
-                                        module_name=?, duration=?, lecture_hours=?, tutorial_hours=?, practical_hours=?, 
-                                        programme=?, programme_coordinator=?, weightage=? WHERE module_code=?''', 
+                                    cursor.execute('''UPDATE "Modules" SET 
+                                        module_name=%s, duration=%s, lecture_hours=%s, tutorial_hours=%s, practical_hours=%s, 
+                                        programme=%s, programme_coordinator=%s, weightage=%s WHERE module_code=%s''', 
                                         (name, duration, hours, tut_hours, prac_hours, prog, coord, weight, code))
                                 else:
-                                    # This creates a new module.
-                                    cursor.execute('''INSERT INTO Modules 
+                                    cursor.execute('''INSERT INTO "Modules" 
                                         (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''', 
                                         (code, name, duration, hours, tut_hours, prac_hours, prog, coord, weight))
                                 import_count += 1
                                 
@@ -528,31 +549,48 @@ else:
             
             st.divider()
             
-            # This section allows the admin to manually add new modules using the module form import feature.
+            # ==========================================
+            # MANUALLY ADD MODULE SECTION
+            # ==========================================
             st.subheader("Manually Add a Module")
             with st.form("add_module_form", clear_on_submit=True):
-                col1, col2 = st.columns(2)
+                # --- FIXED: 3-Column layout with all 11 fields ---
+                col1, col2, col3 = st.columns(3)
+                
                 with col1:
                     m_id = st.text_input("Module Code (e.g., SE101)")
-                    m_name = st.text_input("Module Name (e.g., Software Engineering)")
-                    m_duration = st.number_input("Duration (Weeks)", min_value=1, value=15)
+                    m_name = st.text_input("Module Name")
+                    m_dept = st.text_input("Department")
+                    m_prog = st.text_input("Programme")
+                    
                 with col2:
+                    m_duration = st.number_input("Duration (Weeks)", min_value=1, value=15)
                     l_hrs = st.number_input("Lecture Hours (L)", min_value=0, value=0)
                     t_hrs = st.number_input("Tutorial Hours (T)", min_value=0, value=0)
+                    
+                with col3:
                     p_hrs = st.number_input("Practical Hours (P)", min_value=0, value=0)
+                    m_coord = st.text_input("Programme Coordinator")
+                    m_cred = st.number_input("Credits", min_value=0, value=3)
+                    m_weight = st.number_input("Weightage (%)", min_value=0.0, value=100.0)
                     
                 submit_mod = st.form_submit_button("Save Module to Database")
                 
                 if submit_mod:
                     if m_id and m_name:
                         cursor = conn.cursor()
-                        cursor.execute('INSERT INTO "Modules" (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours) VALUES (%s, %s, %s, %s, %s, %s)', 
-                                       (m_id, m_name, m_duration, l_hrs, t_hrs, p_hrs))
+                        # FIXED: Postgres Syntax for all 11 columns
+                        cursor.execute('''
+                            INSERT INTO "Modules" 
+                            (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, department, programme, programme_coordinator, credits, weightage) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ''', (m_id, m_name, m_duration, l_hrs, t_hrs, p_hrs, m_dept, m_prog, m_coord, m_cred, m_weight))
                         conn.commit()
                         st.success(f"Module {m_id} successfully added!")
                         st.rerun()
                     else:
                         st.error("Module Code and Name are required.")
+            
             conn.close()
 
         with tab3:
