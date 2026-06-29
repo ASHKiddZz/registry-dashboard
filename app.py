@@ -203,7 +203,7 @@ else:
         st.divider()
         
         # Building the tabs within the registry dashboard.
-        tab1, tab2, tab3, tab4 = st.tabs(["Manage Users", "Manage Modules", "Allocations Overview", "Promotions & Rotations"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Manage Users", "Manage Modules", "Semester Timetable", "Allocations Overview", "Promotions & Rotations"])
         
         with tab1:
             st.subheader("Current System Users")
@@ -525,12 +525,16 @@ else:
                         if st.button("Run Timetable Import", type="primary"):
                             import_count = 0
                             
+                            # Wipe the old timetable data so we don't get duplicates on re-upload
+                            cursor.execute('DELETE FROM "Class_Schedules"')
+                            
                             for index, row in mod_df.iterrows():
                                 code = str(row.get(col_code, '')).strip()
                                 name = str(row.get(col_name, '')).strip()
                                 
                                 if code == 'nan' or code == '' or pd.isna(row.get(col_code)): continue
                                 
+                                # 1. --- MODULE DATA ---
                                 prog = str(row.get(col_prog, 'General')).strip()
                                 coord = str(row.get(col_coord, 'Unassigned')).strip()
                                 
@@ -543,27 +547,45 @@ else:
                                 try: hours = int(row.get('Lecture Hours (L)', 3))
                                 except: hours = 3
                                 
-                                try: tut_hours = int(row.get('Tutorial Hours (T)', 0))
-                                except: tut_hours = 0
-                                
-                                try: prac_hours = int(row.get('Practical Hours (P)', 0))
-                                except: prac_hours = 0
-                                
                                 cursor.execute('SELECT * FROM "Modules" WHERE module_code=%s', (code,))
                                 if cursor.fetchone():
                                     cursor.execute('''UPDATE "Modules" SET 
-                                        module_name=%s, duration=%s, lecture_hours=%s, tutorial_hours=%s, practical_hours=%s, 
-                                        programme=%s, programme_coordinator=%s, weightage=%s WHERE module_code=%s''', 
-                                        (name, duration, hours, tut_hours, prac_hours, prog, coord, weight, code))
+                                        module_name=%s, duration=%s, lecture_hours=%s, programme=%s, programme_coordinator=%s, weightage=%s WHERE module_code=%s''', 
+                                        (name, duration, hours, prog, coord, weight, code))
                                 else:
                                     cursor.execute('''INSERT INTO "Modules" 
-                                        (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, programme_coordinator, weightage) 
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''', 
-                                        (code, name, duration, hours, tut_hours, prac_hours, prog, coord, weight))
+                                        (module_code, module_name, duration, lecture_hours, programme, programme_coordinator, weightage) 
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
+                                        (code, name, duration, hours, prog, coord, weight))
+                                        
+                                # 2. --- NEW FEATURE: SCHEDULE DATA ---
+                                cohort = str(row.get('Cohort', '')).strip()
+                                
+                                # Safely grab student numbers
+                                try: students = int(row.get('No. of Students', 0))
+                                except: students = 0
+                                
+                                # The Excel column headers have exact spacing/newlines we must match
+                                resource = str(row.get('Resource Person\nSURNAME Name (Title)', '')).strip()
+                                ft_pt = str(row.get('FT/PT', '')).strip()
+                                f2f = str(row.get('Face to Face\n(Odd / Even Weeks?) ', '')).strip()
+                                online = str(row.get('Online Sessions\n(Odd / Even Weeks?) ', '')).strip()
+                                day = str(row.get('Day', '')).strip()
+                                time = str(row.get('Time ', '')).strip()
+                                venue = str(row.get('Venue', '')).strip()
+                                
+                                # Only insert into Class_Schedules if there is actual scheduling info
+                                if day != 'nan' and day != '':
+                                    cursor.execute('''
+                                        INSERT INTO "Class_Schedules"
+                                        (module_code, cohort, no_of_students, resource_person, ft_pt, face_to_face_weeks, online_sessions_weeks, day_of_week, time_slot, venue)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    ''', (code, cohort, students, resource, ft_pt, f2f, online, day, time, venue))
+                                
                                 import_count += 1
                                 
                             conn.commit()
-                            st.success(f"✅ Successfully processed {import_count} modules from the timetable!")
+                            st.success(f"✅ Successfully processed {import_count} modules and updated the master timetable!")
                             st.rerun()
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
@@ -614,7 +636,71 @@ else:
             
             conn.close()
 
+        # ==========================================
+        # TAB 3: SEMESTER TIMETABLE VIEWER
+        # ==========================================
         with tab3:
+            st.subheader("📅 Interactive Semester Timetable")
+            st.info("Use the dropdown filters below to search for specific schedules.")
+            
+            conn = cloud_engine.raw_connection()
+            try:
+                # Grab all schedule data
+                schedules_df = pd.read_sql_query('SELECT * FROM "Class_Schedules" ORDER BY day_of_week, time_slot', conn)
+                
+                if schedules_df.empty:
+                    st.warning("No timetable data found in the database. Please run the Timetable Import in Tab 2.")
+                else:
+                    # --- DYNAMIC FILTERS ---
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        # Get a list of unique cohorts, removing empty strings/nan
+                        cohort_list = sorted([c for c in schedules_df['cohort'].unique() if c and c != 'nan'])
+                        cohort_filter = st.selectbox("Filter by Cohort", ["Show All"] + cohort_list)
+                        
+                    with col2:
+                        lecturer_list = sorted([l for l in schedules_df['resource_person'].unique() if l and l != 'nan'])
+                        lecturer_filter = st.selectbox("Filter by Lecturer", ["Show All"] + lecturer_list)
+                        
+                    with col3:
+                        venue_list = sorted([v for v in schedules_df['venue'].unique() if v and v != 'nan'])
+                        venue_filter = st.selectbox("Filter by Venue / Room", ["Show All"] + venue_list)
+
+                    # --- APPLY FILTERS ---
+                    filtered_df = schedules_df.copy()
+                    
+                    if cohort_filter != "Show All":
+                        filtered_df = filtered_df[filtered_df['cohort'] == cohort_filter]
+                    if lecturer_filter != "Show All":
+                        filtered_df = filtered_df[filtered_df['resource_person'] == lecturer_filter]
+                    if venue_filter != "Show All":
+                        filtered_df = filtered_df[filtered_df['venue'] == venue_filter]
+
+                    # --- DISPLAY DATA ---
+                    st.write(f"**Found {len(filtered_df)} scheduled sessions:**")
+                    
+                    # Clean up the column names for the user UI
+                    display_cols = {
+                        'module_code': 'Module Code',
+                        'cohort': 'Cohort',
+                        'day_of_week': 'Day',
+                        'time_slot': 'Time Slot',
+                        'venue': 'Venue',
+                        'resource_person': 'Lecturer Assigned',
+                        'face_to_face_weeks': 'F2F Weeks',
+                        'online_sessions_weeks': 'Online Weeks'
+                    }
+                    
+                    # Display the beautiful filtered table
+                    st.dataframe(filtered_df[list(display_cols.keys())].rename(columns=display_cols), use_container_width=True, hide_index=True)
+
+            except Exception as e:
+                st.error(f"Error loading timetable: {e}")
+            finally:
+                conn.close()
+
+        with tab4:
             st.subheader("Workload & Allocations Overview")
             conn = sqlite3.connect('registry_database.db')
             
@@ -920,7 +1006,7 @@ else:
         # ==========================================
         #         TAB 4: PROMOTION MANAGEMENT
         # ==========================================
-        with tab4:
+        with tab5:
             st.header("📋 Promotion Management")
 
             conn = sqlite3.connect('registry_database.db')
