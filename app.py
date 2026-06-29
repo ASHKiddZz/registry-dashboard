@@ -465,66 +465,54 @@ else:
             st.divider()
             
             # ==========================================
-            # BULK IMPORT SECTION
+            # IMPORT SEMESTER TIMETABLE SECTION
             # ==========================================
-            st.subheader("📥 Bulk Import / Update Modules")
-            st.info("Upload a standard module list or the official UTM timetable to auto-update module records.")
+            st.subheader("📅 Import Semester Timetable")
+            st.info("Upload the official UTM Semester Timetable to automatically extract metadata and update records.")
             
-            format_choice = st.radio("Select Excel Format:", ["Standard Clean Format", "UTM Official Format (Extracts Metadata & Skips Headers)"], horizontal=True, key="tab2_format")
-            
-            uploaded_file = st.file_uploader("Upload Modules Excel file", type=["xlsx", "xls"], key="module_uploader")
+            uploaded_file = st.file_uploader("Upload Official Timetable (Excel)", type=["xlsx", "xls"], key="module_uploader")
             
             if uploaded_file is not None:
                 try:
                     cursor = conn.cursor()
                     
-                    if "UTM" in format_choice:
-                        # --- NEW FEATURE: EXTRACT 7-ROW METADATA ---
-                        meta_df = pd.read_excel(uploaded_file, header=None, nrows=7)
-                        
-                        uni_name = str(meta_df.iloc[0, 0]).strip()
-                        faculty_name = str(meta_df.iloc[1, 0]).strip()
-                        acad_year = str(meta_df.iloc[2, 0]).strip()
-                        start_date = str(meta_df.iloc[3, 0]).strip()
-                        exemption_date = str(meta_df.iloc[4, 0]).strip()
-                        end_dates = str(meta_df.iloc[5, 0]).strip()
-                        venue_notes = str(meta_df.iloc[6, 0]).strip()
-                        
-                        # Save the metadata to the new database table
-                        cursor.execute('''
-                            INSERT INTO "Semester_Metadata" 
-                            (university, faculty, academic_year, start_date, exemption_date, end_dates, venue_notes)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ''', (uni_name, faculty_name, acad_year, start_date, exemption_date, end_dates, venue_notes))
-                        conn.commit()
-
-                        # Display the extracted metadata beautifully on the dashboard
-                        st.success("✅ Semester Metadata Successfully Extracted & Saved!")
-                        with st.expander("View Detected Semester Details", expanded=True):
-                            st.markdown(f"""
-                            * **Institution:** {uni_name} ({faculty_name})
-                            * **Academic Term:** {acad_year}
-                            * **{start_date}**
-                            * **{end_dates}**
-                            """)
-
-                        # --- LOAD THE MODULE DATA (Fixing the header to row 8) ---
-                        mod_df = pd.read_excel(uploaded_file, header=8)
-                        col_code = 'Module Code'
-                        col_name = 'Module Title'
-                        col_prog = 'Programme'
-                        col_coord = 'PROGRAMME COORDINATOR'
-                        col_weight = 'Weightage'
+                    # --- 1. EXTRACT 7-ROW METADATA ---
+                    meta_df = pd.read_excel(uploaded_file, header=None, nrows=7)
                     
-                    else:
-                        # STANDARD FORMAT (No metadata extraction)
-                        mod_df = pd.read_excel(uploaded_file)
-                        col_code = 'Module Code'
-                        col_name = 'Module Name'
-                        col_prog = 'Programme'
-                        col_coord = 'Coordinator'
-                        col_weight = 'Weightage'
-                        
+                    uni_name = str(meta_df.iloc[0, 0]).strip()
+                    faculty_name = str(meta_df.iloc[1, 0]).strip()
+                    acad_year = str(meta_df.iloc[2, 0]).strip()
+                    start_date = str(meta_df.iloc[3, 0]).strip()
+                    exemption_date = str(meta_df.iloc[4, 0]).strip()
+                    end_dates = str(meta_df.iloc[5, 0]).strip()
+                    venue_notes = str(meta_df.iloc[6, 0]).strip()
+                    
+                    # Save the metadata to the database
+                    cursor.execute('''
+                        INSERT INTO "Semester_Metadata" 
+                        (university, faculty, academic_year, start_date, exemption_date, end_dates, venue_notes)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ''', (uni_name, faculty_name, acad_year, start_date, exemption_date, end_dates, venue_notes))
+                    conn.commit()
+
+                    # Display the extracted metadata beautifully on the dashboard
+                    st.success("✅ Semester Metadata Successfully Extracted & Saved!")
+                    with st.expander("View Detected Semester Details", expanded=True):
+                        st.markdown(f"""
+                        * **Institution:** {uni_name} ({faculty_name})
+                        * **Academic Term:** {acad_year}
+                        * **{start_date}**
+                        * **{end_dates}**
+                        """)
+
+                    # --- 2. LOAD THE TIMETABLE DATA ---
+                    mod_df = pd.read_excel(uploaded_file, header=8)
+                    col_code = 'Module Code'
+                    col_name = 'Module Title'
+                    col_prog = 'Programme'
+                    col_coord = 'PROGRAMME COORDINATOR'
+                    col_weight = 'Weightage'
+                    
                     st.write("### File Preview:")
                     st.dataframe(mod_df.head())
                         
@@ -534,7 +522,7 @@ else:
                     if missing_cols:
                         st.error(f"⚠️ Your file is missing these required columns: {', '.join(missing_cols)}")
                     else:
-                        if st.button("Run Bulk Module Import", type="primary"):
+                        if st.button("Run Timetable Import", type="primary"):
                             import_count = 0
                             
                             for index, row in mod_df.iterrows():
@@ -575,7 +563,7 @@ else:
                                 import_count += 1
                                 
                             conn.commit()
-                            st.success(f"✅ Successfully imported or updated {import_count} modules!")
+                            st.success(f"✅ Successfully processed {import_count} modules from the timetable!")
                             st.rerun()
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
