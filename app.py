@@ -705,27 +705,31 @@ else:
             finally:
                 conn.close()
 
+        # ==========================================
+        # TAB 4: WORKLOAD & ALLOCATIONS OVERVIEW
+        # ==========================================
         with tab4:
             st.subheader("Workload & Allocations Overview")
-            conn = sqlite3.connect('registry_database.db')
+            
+            # FIXED: Cloud Database Connection (Removing the old SQLite ghost!)
+            conn = cloud_engine.raw_connection()
             
             # Two semester tracking feature.
-            # This enables the admin to be able to track the workload over two semesters timeline by switching between two radio button semester 1 and 2.
             selected_semester = st.radio("⏳ Select Active Semester to View:", ["Semester 1", "Semester 2"], horizontal=True)
             st.divider()
             
-            # This is the smart workload calculator, it flags a lecturer if they exceeds their quota based off their roles and category.
+            # This is the smart workload calculator
             st.markdown(f"### Lecturer Workload Analysis ({selected_semester})")
             st.info("💡 Lecturers exceeding their category limit are highlighted automatically.")
             
-            # The workload calculator will now operate based off the selected semester.
-            workload_query = """
+            # FIXED: Postgres '%s' syntax and double quotes for tables
+            workload_query = '''
                 SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_code) as "Assigned Modules"
-                FROM Users u
-                LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
+                FROM "Users" u
+                LEFT JOIN "Allocations" a ON u.user_id = a.user_id AND a.semester = %s
                 WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
                 GROUP BY u.user_id, u.name, u.category_level
-            """
+            '''
             workload_df = pd.read_sql_query(workload_query, conn, params=(selected_semester,))
             
             def get_category_limit(category):
@@ -752,16 +756,16 @@ else:
             
             st.divider()
             
-            # This section is a detailed master list.
+            # Detailed master list
             st.markdown(f"### Detailed Master List ({selected_semester})")
             
-            all_data = pd.read_sql_query("""
+            all_data = pd.read_sql_query('''
                 SELECT u.name as "Lecturer", a.module_code as "Module Code", m.module_name as "Module Title", a.level_semester as "Cohort/Group", a.semester as "Semester"
-                FROM Allocations a
-                JOIN Users u ON a.user_id = u.user_id
-                JOIN Modules m ON a.module_code = m.module_code
-                WHERE a.semester = ?
-            """, conn, params=(selected_semester,))
+                FROM "Allocations" a
+                JOIN "Users" u ON a.user_id = u.user_id
+                JOIN "Modules" m ON a.module_code = m.module_code
+                WHERE a.semester = %s
+            ''', conn, params=(selected_semester,))
             
             lecturer_options = ["All Lecturers"] + sorted(all_data['Lecturer'].unique().tolist()) if not all_data.empty else ["All Lecturers"]
             selected_filter = st.selectbox("🔍 Search / Filter by Lecturer", lecturer_options)
@@ -776,7 +780,7 @@ else:
             
             st.divider()
 
-            # This is the allocation tab section where the admin assigns modules to lecturers or remove them, etc...
+            # Manual Assignment Control
             st.markdown("### Manual Assignment Control")
             
             if 'saved_staff_index' not in st.session_state:
@@ -784,12 +788,11 @@ else:
                 
             col1, col2 = st.columns(2)
             
-            # Assigning a module to a staff.
             with col1:
                 st.write("**Assign a Module to Staff**")
                 
                 with st.form("assign_form"):
-                    staff_df = pd.read_sql_query("SELECT user_id, name FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')", conn)
+                    staff_df = pd.read_sql_query('''SELECT user_id, name FROM "Users" WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')''', conn)
                     
                     if staff_df.empty:
                         st.warning("⚠️ No teaching staff found.")
@@ -801,7 +804,7 @@ else:
                             st.session_state.saved_staff_index = 0
                             
                         selected_staff = st.selectbox("Select Staff Member", staff_list, index=st.session_state.saved_staff_index)
-                        mod_df = pd.read_sql_query("SELECT module_code, module_name FROM Modules", conn)
+                        mod_df = pd.read_sql_query('SELECT module_code, module_name FROM "Modules"', conn)
                         
                         if mod_df.empty:
                             st.warning("⚠️ No modules found.")
@@ -810,7 +813,6 @@ else:
                             mod_list = mod_df['module_code'].astype(str) + " - " + mod_df['module_name']
                             selected_mod = st.selectbox("Select Module", mod_list)
                             
-                            # Selecting between two semesters when assigning modules.
                             col_a, col_b = st.columns(2)
                             with col_a:
                                 assign_semester = st.selectbox("Target Semester", ["Semester 1", "Semester 2"], index=0 if selected_semester == "Semester 1" else 1)
@@ -825,27 +827,25 @@ else:
                                 m_id = selected_mod.split(" - ")[0]
                                 
                                 cursor = conn.cursor()
-                                # This checks if a lecturer is already teaching this particular module in the current semester.
-                                cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (s_id, m_id, assign_cohort, assign_semester))
+                                cursor.execute('SELECT * FROM "Allocations" WHERE user_id=%s AND module_code=%s AND level_semester=%s AND semester=%s', (s_id, m_id, assign_cohort, assign_semester))
                                 if cursor.fetchone():
                                     st.error(f"This person is already teaching {m_id} for {assign_cohort} in {assign_semester}!")
                                 else:
-                                    # Insert the new record with the correct semester.
-                                    cursor.execute("INSERT INTO Allocations (user_id, module_code, cohort, semester) VALUES (?, ?, ?, ?)", (s_id, m_id, assign_cohort, assign_semester))
+                                    # Used level_semester to perfectly match the SELECT statement and avoid DB crashes
+                                    cursor.execute('INSERT INTO "Allocations" (user_id, module_code, level_semester, semester) VALUES (%s, %s, %s, %s)', (s_id, m_id, assign_cohort, assign_semester))
                                     conn.commit()
                                     st.success(f"Assigned {m_id} ({assign_cohort}) to {assign_semester} successfully!")
                                     st.rerun()
 
-            # This is to remove a module allocated to a staff.
             with col2:
                 st.write("**Remove an Allocation**")
                 with st.form("remove_form"):
-                    alloc_df = pd.read_sql_query("""
+                    alloc_df = pd.read_sql_query('''
                         SELECT a.user_id, u.name, a.module_code, m.module_name, a.level_semester, a.semester
-                        FROM Allocations a
-                        JOIN Users u ON a.user_id = u.user_id
-                        JOIN Modules m ON a.module_code = m.module_code
-                    """, conn)
+                        FROM "Allocations" a
+                        JOIN "Users" u ON a.user_id = u.user_id
+                        JOIN "Modules" m ON a.module_code = m.module_code
+                    ''', conn)
                     
                     if not alloc_df.empty:
                         alloc_list = alloc_df['user_id'].astype(str) + "|" + alloc_df['module_code'] + "|" + alloc_df['level_semester'] + "|" + alloc_df['semester'] + " : " + alloc_df['name'] + " - " + alloc_df['module_name'] + " (" + alloc_df['level_semester'] + ", " + alloc_df['semester'] + ")"
@@ -858,7 +858,7 @@ else:
                             r_uid, r_mid, r_cohort, r_semester = int(keys[0]), keys[1], keys[2], keys[3]
                             
                             cursor = conn.cursor()
-                            cursor.execute("DELETE FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (r_uid, r_mid, r_cohort, r_semester))
+                            cursor.execute('DELETE FROM "Allocations" WHERE user_id=%s AND module_code=%s AND level_semester=%s AND semester=%s', (r_uid, r_mid, r_cohort, r_semester))
                             conn.commit()
                             st.success("Allocation removed successfully!")
                             st.rerun()
@@ -866,150 +866,10 @@ else:
                         st.info("There are no allocations to remove.")
                         st.form_submit_button("Remove Allocation", disabled=True)
 
-            # This is the bulk import feature to import the Timetable along with allocations,etc...
-            st.divider()
-            st.markdown("### 📥 Bulk Import Timetable (Allocations & Enrichment)")
-            st.info("Upload the timetable. The system will auto-assign modules AND enrich staff/module profiles with FT/PT, Weightage, and Student Counts.")
-            
-            format_choice = st.radio("Select Excel File Format:", ["UTM Official Format (Skips 7 rows)", "Standard Clean Format"], horizontal=True)
-            
-            uploaded_tt = st.file_uploader("Choose a Timetable Excel file", type=["xlsx", "xls"], key="tt_upload")
-            
-            if uploaded_tt is not None:
-                try:
-                    if "UTM" in format_choice:
-                        tt_df = pd.read_excel(uploaded_tt, header=7)
-                        # UTM timetable columns mapping
-                        col_resource = 'Resource Person\nSURNAME Name (Title)'
-                        col_module = 'Module Code'
-                        col_mod_title = 'Module Title'
-                        col_cohort = 'Cohort'
-                        col_level = 'Level Sem\ne.g L1S2'
-                        col_dept = 'Dept'
-                        col_prog = 'Programme'
-                        col_students = 'No. of Students'
-                        col_coord = 'PROGRAMME COORDINATOR'
-                        col_weight = 'Weightage'
-                        col_ftpt = 'FT/PT'
-                    else:
-                        tt_df = pd.read_excel(uploaded_tt)
-                        # Clean format version of Timetable columns mapping
-                        col_resource = 'Resource person Name'
-                        col_module = 'Module Code'
-                        col_mod_title = 'Module Name'
-                        col_cohort = 'Cohort'
-                        col_level = 'Semester'
-                        col_dept = 'Department'
-                        col_prog = 'Programme'
-                        col_students = 'Students'
-                        col_coord = 'Coordinator'
-                        col_weight = 'Weightage'
-                        col_ftpt = 'FT/PT'
-                        
-                    st.write("File Preview:")
-                    st.dataframe(tt_df.head(), use_container_width=True)
-                    
-                    required_cols = [col_resource, col_module, col_level]
-                    missing_cols = [col for col in required_cols if col not in tt_df.columns]
-                    
-                    if missing_cols:
-                        st.error(f"⚠️ Your Excel file is missing these required core columns: {', '.join(missing_cols)}")
-                    else:
-                        if st.button("Run Enterprise Bulk Import", type="primary", use_container_width=True):
-                            cursor = conn.cursor()
-                            alloc_count = 0
-                            missing_staff = set()
-                            
-                            for index, row in tt_df.iterrows():
-                                raw_name = str(row[col_resource]).strip()
-                                if raw_name == 'nan' or raw_name == '' or pd.isna(row[col_resource]):
-                                    continue
-                                
-                                # 1. Extract Title and Clean Name
-                                title = ""
-                                staff_name = raw_name
-                                if "(" in raw_name and ")" in raw_name:
-                                    title = raw_name.split("(")[1].split(")")[0].strip() # Extracts 'Mr', 'Dr', etc.
-                                    staff_name = raw_name.split("(")[0].strip()
-                                
-                                # 2. Safely Extract New Enterprise Data
-                                mod_code = str(row[col_module]).strip()
-                                mod_title = str(row.get(col_mod_title, 'Unknown')).strip()
-                                
-                                # Rmoved the Nan default value assigned by Pandas to something more streamline to the UTM's timetable
-                                if mod_title.lower() == 'nan':
-                                    mod_title = 'Unknown Title'
-                                    
-                                cohort = str(row.get(col_cohort, 'Group A')).strip() 
-                                dept = str(row.get(col_dept, 'Unassigned')).strip()
-                                prog = str(row.get(col_prog, 'General')).strip()
-                                coord = str(row.get(col_coord, 'Unassigned')).strip()
-                                ftpt = str(row.get(col_ftpt, 'FT')).strip()
-                                
-                                # convertion of numbers in a safe way
-                                try: weight = float(row.get(col_weight, 0))
-                                except: weight = 0.0
-                                
-                                try: students = int(row.get(col_students, 0))
-                                except: students = 0
-                                
-                                # A feature to know which semester we are in and sort in two separate semesters overview.
-                                level_sem = str(row[col_level]).upper()
-                                if "UTM" in format_choice:
-                                    semester = "Semester 2" if 'S2' in level_sem else "Semester 1"
-                                else:
-                                    semester = str(row[col_level]).strip()
-                                
-                                # Added changes to update database since there were missing factors from the timetable
-                                
-                                # Filling the empty slots with default values and update already existing ones.
-                                cursor.execute("SELECT module_code, module_name FROM Modules WHERE module_code=?", (mod_code,))
-                                existing_mod = cursor.fetchone()
-                                
-                                if existing_mod:
-                                    # Fixing the nan error occured in Name column.
-                                    if str(existing_mod[1]).lower() == 'nan' and mod_title != 'Unknown Title':
-                                        cursor.execute("UPDATE Modules SET module_name=?, programme=?, weightage=?, programme_coordinator=? WHERE module_code=?", (mod_title, prog, weight, coord, mod_code))
-                                    else:
-                                        cursor.execute("UPDATE Modules SET programme=?, weightage=?, programme_coordinator=? WHERE module_code=?", (prog, weight, coord, mod_code))
-                                else:
-                                    # Adding default values for hours instead of saying none.
-                                    cursor.execute("""
-                                        INSERT INTO Modules (module_code, module_name, duration, lecture_hours, tutorial_hours, practical_hours, programme, weightage, programme_coordinator) 
-                                        VALUES (?, ?, 15, 3, 0, 0, ?, ?, ?)
-                                    """, (mod_code, mod_title, prog, weight, coord))
-
-                                # Step B: Match User and Enrich Profile 
-                                cursor.execute("SELECT user_id FROM Users WHERE name LIKE ?", (f"%{staff_name}%",))
-                                user_result = cursor.fetchone()
-                                
-                                if user_result:
-                                    s_id = user_result[0]
-                                    
-                                    # Update the lecturer's profile with their true department and FT/PT status!
-                                    cursor.execute("UPDATE Users SET department=?, title=?, employment_type=? WHERE user_id=?", (dept, title, ftpt, s_id))
-                                    
-                                    # Step C: Log the Allocation with Student Counts
-                                    cursor.execute("SELECT * FROM Allocations WHERE user_id=? AND module_code=? AND level_semester=? AND semester=?", (s_id, mod_code, cohort, semester))
-                                    if not cursor.fetchone():
-                                        cursor.execute("INSERT INTO Allocations (user_id, module_code, level_semester, semester, students_count) VALUES (?, ?, ?, ?, ?)", (s_id, mod_code, level_sem, semester, students))
-                                        alloc_count += 1
-                                else:
-                                    missing_staff.add(staff_name)
-                                            
-                            conn.commit()
-                            st.success(f"🎉 Success! Imported {alloc_count} new allocations and enriched system database with UTM data!")
-                            
-                            if missing_staff:
-                                st.warning(f"⚠️ Could not auto-match these names to the database: {', '.join(missing_staff)}. Please ensure they are registered in Tab 1.")
-                                
-                except Exception as e:
-                    st.error(f"Error processing timetable: {e}")
-
             conn.close()
 
         # ==========================================
-        #         TAB 4: PROMOTION MANAGEMENT
+        #         TAB 5: PROMOTION MANAGEMENT
         # ==========================================
         with tab5:
             st.header("📋 Promotion Management")
