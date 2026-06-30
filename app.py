@@ -476,9 +476,14 @@ else:
                 try:
                     cursor = conn.cursor()
                     
-                    # --- 1. EXTRACT 7-ROW METADATA ---
+                   # --- 1. EXTRACT 7-ROW METADATA ---
                     meta_df = pd.read_excel(uploaded_file, header=None, nrows=7)
                     
+                    # --- THE BOUNCER (Strict Validation) ---
+                    if len(meta_df) < 7:
+                        st.error("⚠️ Format Error: The uploaded file does not match the Official UTM Timetable format. Missing the 7-row header.")
+                        st.stop() # This safely halts the script right here!
+                        
                     uni_name = str(meta_df.iloc[0, 0]).strip()
                     faculty_name = str(meta_df.iloc[1, 0]).strip()
                     acad_year = str(meta_df.iloc[2, 0]).strip()
