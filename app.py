@@ -479,10 +479,10 @@ else:
                    # --- 1. EXTRACT 7-ROW METADATA ---
                     meta_df = pd.read_excel(uploaded_file, header=None, nrows=7)
                     
-                    # --- THE BOUNCER (Strict Validation) ---
+                    # --- THE NEW BOUNCER (Graceful Exception) ---
                     if len(meta_df) < 7:
-                        st.error("⚠️ Format Error: The uploaded file does not match the Official UTM Timetable format. Missing the 7-row header.")
-                        st.stop() # This safely halts the script right here!
+                        # This throws an error to the 'except' block below, keeping the app alive!
+                        raise ValueError("The uploaded file does not match the Official UTM Timetable format. Missing the 7-row header.")
                         
                     uni_name = str(meta_df.iloc[0, 0]).strip()
                     faculty_name = str(meta_df.iloc[1, 0]).strip()
