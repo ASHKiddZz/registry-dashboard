@@ -476,7 +476,7 @@ else:
                 try:
                     cursor = conn.cursor()
                     
-                   # --- 1. EXTRACT 7-ROW METADATA ---
+                    # --- 1. EXTRACT 7-ROW METADATA ---
                     meta_df = pd.read_excel(uploaded_file, header=None, nrows=7)
                     
                     # --- THE NEW BOUNCER (Graceful Exception) ---
@@ -529,6 +529,8 @@ else:
                     else:
                         if st.button("Run Timetable Import", type="primary"):
                             import_count = 0
+                            alloc_count = 0
+                            missing_staff = set()
                             
                             # Wipe the old timetable data so we don't get duplicates on re-upload
                             cursor.execute('DELETE FROM "Class_Schedules"')
@@ -571,7 +573,7 @@ else:
                                 except: students = 0
                                 
                                 # The Excel column headers have exact spacing/newlines we must match
-                                resource = str(row.get('Resource Person\nSURNAME Name (Title)', '')).strip()
+                                raw_resource = str(row.get('Resource Person\nSURNAME Name (Title)', '')).strip()
                                 ft_pt = str(row.get('FT/PT', '')).strip()
                                 f2f = str(row.get('Face to Face\n(Odd / Even Weeks?) ', '')).strip()
                                 online = str(row.get('Online Sessions\n(Odd / Even Weeks?) ', '')).strip()
@@ -585,12 +587,41 @@ else:
                                         INSERT INTO "Class_Schedules"
                                         (module_code, cohort, no_of_students, resource_person, ft_pt, face_to_face_weeks, online_sessions_weeks, day_of_week, time_slot, venue)
                                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                    ''', (code, cohort, students, resource, ft_pt, f2f, online, day, time, venue))
+                                    ''', (code, cohort, students, raw_resource, ft_pt, f2f, online, day, time, venue))
                                 
+                                # 3. --- NEW FEATURE: AUTO-ALLOCATION LOGIC ---
+                                if raw_resource != 'nan' and raw_resource != '':
+                                    # Clean the name (e.g., "GOPEE Ajit (Mr)" -> "GOPEE Ajit")
+                                    staff_name = raw_resource.split("(")[0].strip() if "(" in raw_resource else raw_resource
+                                    
+                                    # Parse the Semester from the "Level Sem" column
+                                    level_sem_raw = str(row.get('Level Sem\ne.g L1S2', '')).upper()
+                                    target_semester = "Semester 2" if 'S2' in level_sem_raw else "Semester 1"
+                                    
+                                    # Find the user in the PostgreSQL database using ILIKE (case-insensitive)
+                                    cursor.execute('SELECT user_id FROM "Users" WHERE name ILIKE %s', (f"%{staff_name}%",))
+                                    user_match = cursor.fetchone()
+                                    
+                                    if user_match:
+                                        s_id = user_match[0]
+                                        # Check if allocation already exists
+                                        cursor.execute('SELECT * FROM "Allocations" WHERE user_id=%s AND module_code=%s AND level_semester=%s AND semester=%s', 
+                                                       (s_id, code, cohort, target_semester))
+                                        if not cursor.fetchone():
+                                            cursor.execute('INSERT INTO "Allocations" (user_id, module_code, level_semester, semester) VALUES (%s, %s, %s, %s)', 
+                                                           (s_id, code, cohort, target_semester))
+                                            alloc_count += 1
+                                    else:
+                                        missing_staff.add(staff_name)
+
                                 import_count += 1
                                 
                             conn.commit()
-                            st.success(f"✅ Successfully processed {import_count} modules and updated the master timetable!")
+                            
+                            if missing_staff:
+                                st.warning(f"⚠️ Imported timetable, but could not auto-assign these staff (names don't match DB): {', '.join(missing_staff)}")
+                                
+                            st.success(f"✅ Successfully processed {import_count} modules and auto-assigned {alloc_count} workloads!")
                             st.rerun()
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
