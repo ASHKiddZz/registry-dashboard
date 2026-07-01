@@ -530,7 +530,6 @@ else:
                         if st.button("Run Timetable Import", type="primary"):
                             import_count = 0
                             alloc_count = 0
-                            missing_staff = set()
                             
                             # Wipe the old timetable data so we don't get duplicates on re-upload
                             cursor.execute('DELETE FROM "Class_Schedules"')
@@ -565,7 +564,7 @@ else:
                                         VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
                                         (code, name, duration, hours, prog, coord, weight))
                                         
-                                # 2. --- NEW FEATURE: SCHEDULE DATA ---
+                                # 2. --- SCHEDULE DATA ---
                                 cohort = str(row.get('Cohort', '')).strip()
                                 
                                 # Safely grab student numbers
@@ -589,10 +588,14 @@ else:
                                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                     ''', (code, cohort, students, raw_resource, ft_pt, f2f, online, day, time, venue))
                                 
-                                # 3. --- NEW FEATURE: AUTO-ALLOCATION LOGIC & AUTO-CREATE ---
+                                # 3. --- SMART AUTO-ALLOCATION & CATEGORY INFERENCE ---
                                 if raw_resource != 'nan' and raw_resource != '':
-                                    # Clean the name (e.g., "GOPEE Ajit (Mr)" -> "GOPEE Ajit")
-                                    staff_name = raw_resource.split("(")[0].strip() if "(" in raw_resource else raw_resource
+                                    # Properly extract Title and Staff Name
+                                    title = ""
+                                    staff_name = raw_resource
+                                    if "(" in raw_resource and ")" in raw_resource:
+                                        title = raw_resource.split("(")[1].split(")")[0].strip()
+                                        staff_name = raw_resource.split("(")[0].strip()
                                     
                                     # Parse the Semester from the "Level Sem" column
                                     level_sem_raw = str(row.get('Level Sem\ne.g L1S2', '')).upper()
@@ -602,23 +605,38 @@ else:
                                     cursor.execute('SELECT user_id FROM "Users" WHERE name ILIKE %s', (f"%{staff_name}%",))
                                     user_match = cursor.fetchone()
                                     
-                                    # --- THE FIX: AUTO-CREATE MISSING USERS ---
+                                    # --- AUTO-CREATE MISSING USERS WITH INTELLIGENT MAPPING ---
                                     if not user_match:
                                         # Generate a default username (e.g., "gopee.ajit")
                                         default_username = staff_name.lower().replace(" ", ".")
                                         default_password = "password123" # They can change this later
                                         
-                                        # Insert the new user into the database
+                                        inferred_role = "Lecturer"
+                                        inferred_category = "Category 5 (Other Academic)"
+                                        
+                                        if title:
+                                            t_upper = title.upper()
+                                            if "DR" in t_upper:
+                                                inferred_role = "HoD" 
+                                                inferred_category = "Category 1 (Management)" 
+                                            elif "ASSOC" in t_upper or "AP" in t_upper:
+                                                inferred_role = "Associate Professor"
+                                                inferred_category = "Category 4 (PhD Staff)"
+                                            elif "PROF" in t_upper:
+                                                inferred_role = "Professor"
+                                                inferred_category = "Category 4 (PhD Staff)"
+                                                
+                                        # Insert User WITH their newly inferred Category Level and Title
                                         cursor.execute('''
-                                            INSERT INTO "Users" (username, password, name, role) 
-                                            VALUES (%s, %s, %s, %s)
-                                        ''', (default_username, default_password, staff_name, 'Lecturer'))
+                                            INSERT INTO "Users" (username, password, name, role, category_level, title) 
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                        ''', (default_username, default_password, staff_name, inferred_role, inferred_category, title))
                                         conn.commit() # Save the user immediately
                                         
                                         # Fetch their brand new user_id
                                         cursor.execute('SELECT user_id FROM "Users" WHERE name=%s', (staff_name,))
                                         user_match = cursor.fetchone()
-                                        st.toast(f"Created new staff account: {staff_name}") # Pop-up notification!
+                                        st.toast(f"Created {staff_name} as {inferred_role}") # Pop-up notification!
                                         
                                     if user_match:
                                         s_id = user_match[0]
@@ -629,15 +647,10 @@ else:
                                             cursor.execute('INSERT INTO "Allocations" (user_id, module_code, level_semester, semester) VALUES (%s, %s, %s, %s)', 
                                                            (s_id, code, cohort, target_semester))
                                             alloc_count += 1
-                                    else:
-                                        missing_staff.add(staff_name)
 
                                 import_count += 1
                                 
                             conn.commit()
-                            
-                            if missing_staff:
-                                st.warning(f"⚠️ Imported timetable, but could not auto-assign these staff (names don't match DB): {', '.join(missing_staff)}")
                                 
                             st.success(f"✅ Successfully processed {import_count} modules and auto-assigned {alloc_count} workloads!")
                             st.rerun()
