@@ -589,7 +589,7 @@ else:
                                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                     ''', (code, cohort, students, raw_resource, ft_pt, f2f, online, day, time, venue))
                                 
-                                # 3. --- NEW FEATURE: AUTO-ALLOCATION LOGIC ---
+                                # 3. --- NEW FEATURE: AUTO-ALLOCATION LOGIC & AUTO-CREATE ---
                                 if raw_resource != 'nan' and raw_resource != '':
                                     # Clean the name (e.g., "GOPEE Ajit (Mr)" -> "GOPEE Ajit")
                                     staff_name = raw_resource.split("(")[0].strip() if "(" in raw_resource else raw_resource
@@ -598,10 +598,28 @@ else:
                                     level_sem_raw = str(row.get('Level Sem\ne.g L1S2', '')).upper()
                                     target_semester = "Semester 2" if 'S2' in level_sem_raw else "Semester 1"
                                     
-                                    # Find the user in the PostgreSQL database using ILIKE (case-insensitive)
+                                    # Find the user in the PostgreSQL database
                                     cursor.execute('SELECT user_id FROM "Users" WHERE name ILIKE %s', (f"%{staff_name}%",))
                                     user_match = cursor.fetchone()
                                     
+                                    # --- THE FIX: AUTO-CREATE MISSING USERS ---
+                                    if not user_match:
+                                        # Generate a default username (e.g., "gopee.ajit")
+                                        default_username = staff_name.lower().replace(" ", ".")
+                                        default_password = "password123" # They can change this later
+                                        
+                                        # Insert the new user into the database
+                                        cursor.execute('''
+                                            INSERT INTO "Users" (username, password, name, role) 
+                                            VALUES (%s, %s, %s, %s)
+                                        ''', (default_username, default_password, staff_name, 'Lecturer'))
+                                        conn.commit() # Save the user immediately
+                                        
+                                        # Fetch their brand new user_id
+                                        cursor.execute('SELECT user_id FROM "Users" WHERE name=%s', (staff_name,))
+                                        user_match = cursor.fetchone()
+                                        st.toast(f"Created new staff account: {staff_name}") # Pop-up notification!
+                                        
                                     if user_match:
                                         s_id = user_match[0]
                                         # Check if allocation already exists
