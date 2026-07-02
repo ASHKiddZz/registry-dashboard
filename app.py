@@ -611,36 +611,51 @@ else:
                                         default_username = staff_name.lower().replace(" ", ".")
                                         default_password = "password123" # They can change this later
                                         
-                                        inferred_role = "Lecturer"
-                                        inferred_category = "Category 5 (Other Academic)"
+                                        # --- THE FIX: UPSERT LOGIC (INSERT OR UPDATE) ---
+                                    # First, calculate what they SHOULD be based on the Excel file
+                                    inferred_role = "Lecturer"
+                                    inferred_category = "Category 5 (Other Academic)"
+                                    raw_upper = raw_resource.upper()
+                                    
+                                    if "ASSOC PROF" in raw_upper or "AP" in raw_upper:
+                                        inferred_role = "Associate Professor"
+                                        inferred_category = "Category 4 (PhD Staff)"
+                                    elif "PROF" in raw_upper:
+                                        inferred_role = "Professor"
+                                        inferred_category = "Category 4 (PhD Staff)"
+                                    elif "(DR)" in raw_upper:
+                                        inferred_role = "HoD" 
+                                        inferred_category = "Category 1 (Management)" 
+
+                                    if not user_match:
+                                        # SCENARIO A: User is totally new. CREATE THEM.
+                                        default_username = staff_name.lower().replace(" ", ".")
+                                        default_password = "password123" 
                                         
-                                        if title:
-                                            t_upper = title.upper()
-                                            if "DR" in t_upper:
-                                                inferred_role = "HoD" 
-                                                inferred_category = "Category 1 (Management)" 
-                                            elif "ASSOC" in t_upper or "AP" in t_upper:
-                                                inferred_role = "Associate Professor"
-                                                inferred_category = "Category 4 (PhD Staff)"
-                                            elif "PROF" in t_upper:
-                                                inferred_role = "Professor"
-                                                inferred_category = "Category 4 (PhD Staff)"
-                                                
-                                        # Insert User WITH their newly inferred Category Level and Title
                                         cursor.execute('''
                                             INSERT INTO "Users" (username, password, name, role, category_level, title) 
                                             VALUES (%s, %s, %s, %s, %s, %s)
                                         ''', (default_username, default_password, staff_name, inferred_role, inferred_category, title))
-                                        conn.commit() # Save the user immediately
+                                        conn.commit() 
                                         
-                                        # Fetch their brand new user_id
                                         cursor.execute('SELECT user_id FROM "Users" WHERE name=%s', (staff_name,))
                                         user_match = cursor.fetchone()
-                                        st.toast(f"Created {staff_name} as {inferred_role}") # Pop-up notification!
+                                        st.toast(f"Created new user: {staff_name}") 
                                         
+                                    else:
+                                        # SCENARIO B: User already exists! UPDATE THEM.
+                                        # This fixes anyone who currently has "N/A" or gets promoted in a future semester!
+                                        s_id = user_match[0]
+                                        cursor.execute('''
+                                            UPDATE "Users" 
+                                            SET role=%s, category_level=%s, title=%s 
+                                            WHERE user_id=%s
+                                        ''', (inferred_role, inferred_category, title, s_id))
+                                        conn.commit()
+
+                                    # Finally, log the allocation mapping
                                     if user_match:
                                         s_id = user_match[0]
-                                        # Check if allocation already exists
                                         cursor.execute('SELECT * FROM "Allocations" WHERE user_id=%s AND module_code=%s AND level_semester=%s AND semester=%s', 
                                                        (s_id, code, cohort, target_semester))
                                         if not cursor.fetchone():
