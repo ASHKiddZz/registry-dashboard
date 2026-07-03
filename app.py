@@ -210,8 +210,11 @@ else:
             
             conn = cloud_engine.raw_connection()
             
-            # --- 1. FIXED: Added 'username' to the SELECT query so we can edit it ---
-            users_df = pd.read_sql_query('SELECT user_id, name, username, role, category_level FROM "Users"', conn)
+            # --- THE FIX: Eradicated 'category_level', added 'title' for better visibility ---
+            users_df = pd.read_sql_query('''
+                SELECT user_id as "ID", name as "Full Name", username as "Username", role as "Role", title as "Title" 
+                FROM "Users"
+            ''', conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
             
             st.divider()
@@ -225,34 +228,33 @@ else:
                 st.stop() 
 
             # This creates a drop down user list also listing the names of the users with their id.
-            user_list = users_df['user_id'].astype(str) + " - " + users_df['name']
+            user_list = users_df['ID'].astype(str) + " - " + users_df['Full Name']
             selected_user_str = st.selectbox("Select User to Modify", user_list)
 
             # 3. Get the ID 
             selected_id = int(selected_user_str.split(" - ")[0])
             
             # Grab that specific user's current data to fill the default values
-            current_data = users_df[users_df['user_id'] == selected_id].iloc[0]
+            current_data = users_df[users_df['ID'] == selected_id].iloc[0]
             
             col1, col2 = st.columns(2)
             with col1:
-                edit_name = st.text_input("Update Full Name", value=current_data['name'])
+                edit_name = st.text_input("Update Full Name", value=current_data['Full Name'])
                 
-                # --- 2. FIXED: Dedicated Username input (safely handles NULL values) ---
-                raw_user = current_data.get('username')
+                raw_user = current_data.get('Username')
                 safe_username = "" if pd.isna(raw_user) else str(raw_user)
                 edit_username = st.text_input("Update Username (Login ID)", value=safe_username)
                 
                 roles = ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"]
-                current_role = current_data['role']
+                current_role = current_data['Role']
                 role_index = roles.index(current_role) if current_role in roles else 0
                 edit_role = st.selectbox("Update Role", roles, index=role_index)
                 
             with col2:
-                levels = ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"]
-                current_level = current_data['category_level']
-                level_index = levels.index(current_level) if current_level in levels else 0
-                edit_level = st.selectbox("Update Category", levels, index=level_index)
+                # --- THE FIX: Category Dropdown Completely Removed from UI ---
+                raw_title = current_data.get('Title')
+                safe_title = "" if pd.isna(raw_title) else str(raw_title)
+                edit_title = st.text_input("Update Title (e.g., Dr, Mr, Prof)", value=safe_title)
                 
                 # This is a feature that allows a password reset incase they forget their password.
                 edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
@@ -262,13 +264,13 @@ else:
             with btn_col1:
                 if st.button("Update User", use_container_width=True):
                     cursor = conn.cursor()
-                    # --- 3. FIXED: SQL Queries now update the 'username' column ---
+                    # --- THE FIX: category_level removed from SQL UPDATE ---
                     if edit_password: 
-                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, category_level=%s, password=%s WHERE user_id=%s', 
-                                       (edit_name, edit_username, edit_role, edit_level, edit_password, selected_id))
+                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, title=%s, password=%s WHERE user_id=%s', 
+                                       (edit_name, edit_username, edit_role, edit_title, edit_password, selected_id))
                     else: 
-                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, category_level=%s WHERE user_id=%s', 
-                                       (edit_name, edit_username, edit_role, edit_level, selected_id))
+                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, title=%s WHERE user_id=%s', 
+                                       (edit_name, edit_username, edit_role, edit_title, selected_id))
                     conn.commit()
                     st.success(f"User updated successfully!")
                     st.rerun()
@@ -291,13 +293,12 @@ else:
             st.subheader("Register New Staff Member")
             with st.form("add_user_form", clear_on_submit=True):
                 new_name = st.text_input("Full Name")
-                
-                # --- 4. FIXED: Added Username field to the registration form ---
                 new_username = st.text_input("Username (Login ID)")
-                
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
-                new_level = st.selectbox("Category Limit", ["Category 1 (HoS)", "Category 2 (HoD)", "Category 3 (TBD)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)", "N/A"])
-    
+                
+                # --- THE FIX: Category Dropdown Removed ---
+                new_title = st.text_input("Title (Optional - e.g., Dr, Mr, Prof)")
+
                 # This section is to manually insert the hire year of a specific user.
                 current_yr = datetime.datetime.now().year
                 new_hire_year = st.number_input("Year Hired", min_value=1990, max_value=current_yr, value=current_yr)
@@ -307,12 +308,11 @@ else:
                 submit_user = st.form_submit_button("Create Account")
 
                 if submit_user:
-                    # --- 5. FIXED: Ensure username is filled out before saving ---
                     if new_name and new_username and new_pass:
                         cursor = conn.cursor()
-                        # --- 6. FIXED: INSERT query now pushes the username to the database ---
-                        cursor.execute('INSERT INTO "Users" (name, username, role, category_level, password, hire_year) VALUES (%s, %s, %s, %s, %s, %s)', 
-                                       (new_name, new_username, new_role, new_level, new_pass, new_hire_year))
+                        # --- THE FIX: category_level removed from SQL INSERT ---
+                        cursor.execute('INSERT INTO "Users" (name, username, role, title, password, hire_year) VALUES (%s, %s, %s, %s, %s, %s)', 
+                                       (new_name, new_username, new_role, new_title, new_pass, new_hire_year))
                         conn.commit()
                         st.success(f"Account created for {new_name}!")
                         st.rerun()
@@ -320,24 +320,20 @@ else:
                         st.error("Please fill out the Name, Username, and Password fields.")
             
             st.divider()
-            # ... (Bulk Import Staff section remains completely unchanged below this!) ...
-            st.subheader("📥 Bulk Import Staff (Annex Upload)")
-
             # This is the rectangular box where you can drag and drop files that needs to be imported on the database.
+            st.subheader("📥 Bulk Import Staff (Annex Upload)")
             uploaded_file = st.file_uploader("Upload staff list (CSV or Excel)", type=['csv', 'xlsx'])
 
             if uploaded_file is not None:
-                # It will read the file into Pandas.
                 try:
                     if uploaded_file.name.endswith('.csv'):
                         import_df = pd.read_csv(uploaded_file)
                     else:
                         import_df = pd.read_excel(uploaded_file)
-                    # When the excel document is uploaded, a small preview wil be displayed with the first 3 rows showing on the overview table.
+                        
                     st.write("Preview of uploaded document:")
                     st.dataframe(import_df.head(3))
 
-                    # This is the import button feature to register all data on the imported document to the database.
                     if st.button("Process & Import Users"):
                         cursor = conn.cursor()
                         added_count = 0
@@ -346,19 +342,17 @@ else:
                         for index, row in import_df.iterrows():
                             staff_name = str(row.get('Name', '')).strip()
                             staff_role = str(row.get('Role', '')).strip()
-                            category = str(row.get('Category_Level', 'N/A')).strip()
+                            # --- THE FIX: category_level extraction removed ---
 
                             if staff_name and staff_name != 'nan':
-
-                                # Check if this person is already in the database.
                                 cursor.execute('SELECT * FROM "Users" WHERE name=%s', (staff_name,))
                                 if not cursor.fetchone():
-                                    # This is creates the account of the user with a default password which they can later change once they login on their dashboard.
-                                    cursor.execute('INSERT INTO "Users" (name, role, category_level, password) VALUES (%s, %s, %s, %s)',
-                                                   (staff_name, staff_role, category, 'welcome123'))
+                                    # --- THE FIX: category_level removed from SQL INSERT ---
+                                    cursor.execute('INSERT INTO "Users" (name, role, password) VALUES (%s, %s, %s)',
+                                                   (staff_name, staff_role, 'welcome123'))
                                     added_count += 1
                                 else:
-                                    skipped_count += 1 # This skips the whole code if the user already exists within the database.
+                                    skipped_count += 1 
 
                         conn.commit()
 
@@ -788,7 +782,7 @@ else:
         with tab4:
             st.subheader("Workload & Allocations Overview")
             
-            # FIXED: Cloud Database Connection (Removing the old SQLite ghost!)
+            # FIXED: Cloud Database Connection
             conn = cloud_engine.raw_connection()
             
             # Two semester tracking feature.
@@ -797,28 +791,27 @@ else:
             
             # This is the smart workload calculator
             st.markdown(f"### Lecturer Workload Analysis ({selected_semester})")
-            st.info("💡 Lecturers exceeding their category limit are highlighted automatically.")
+            st.info("💡 Lecturers exceeding their Role limit are highlighted automatically.")
             
-            # FIXED: Postgres '%s' syntax and double quotes for tables
+            # --- THE FIX: SELECTING 'ROLE' AND DROPPING 'CATEGORY' ---
             workload_query = '''
-                SELECT u.name as "Lecturer", u.category_level as "Category", COUNT(a.module_code) as "Assigned Modules"
+                SELECT u.name as "Lecturer", u.role as "Role", COUNT(a.module_code) as "Assigned Modules"
                 FROM "Users" u
                 LEFT JOIN "Allocations" a ON u.user_id = a.user_id AND a.semester = %s
                 WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
-                GROUP BY u.user_id, u.name, u.category_level
+                GROUP BY u.user_id, u.name, u.role
             '''
             workload_df = pd.read_sql_query(workload_query, conn, params=(selected_semester,))
             
-            def get_category_limit(category):
-                if pd.isna(category): return 99 
-                if "Category 1 (Management)" in category: return 2
-                if "Category 2 (Professional)" in category: return 1
-                if "Category 3 (Technical)" in category: return 2
-                if "Category 4 (PhD Staff)" in category: return 5
-                if "Category 5 (Other Academic)" in category: return 6
+            # --- THE FIX: LIMITS BASED STRICTLY ON ROLES ---
+            def get_role_limit(role):
+                if pd.isna(role): return 99 
+                if role in ["HoD", "HoS"]: return 2
+                if role in ["Associate Professor", "Professor"]: return 5
+                if role in ["Lecturer", "Senior Lecturer"]: return 6
                 return 99 
                 
-            workload_df['Limit'] = workload_df['Category'].apply(get_category_limit)
+            workload_df['Limit'] = workload_df['Role'].apply(get_role_limit)
             workload_df['Excess'] = workload_df['Assigned Modules'] - workload_df['Limit']
             workload_df['Excess'] = workload_df['Excess'].apply(lambda x: x if x > 0 else 0)
             workload_df['Status'] = workload_df['Excess'].apply(lambda x: "🚨 OVERLOAD" if x > 0 else "✅ OK")
@@ -908,7 +901,6 @@ else:
                                 if cursor.fetchone():
                                     st.error(f"This person is already teaching {m_id} for {assign_cohort} in {assign_semester}!")
                                 else:
-                                    # Used level_semester to perfectly match the SELECT statement and avoid DB crashes
                                     cursor.execute('INSERT INTO "Allocations" (user_id, module_code, level_semester, semester) VALUES (%s, %s, %s, %s)', (s_id, m_id, assign_cohort, assign_semester))
                                     conn.commit()
                                     st.success(f"Assigned {m_id} ({assign_cohort}) to {assign_semester} successfully!")
