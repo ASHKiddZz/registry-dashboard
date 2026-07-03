@@ -475,7 +475,6 @@ else:
                     
                     # --- THE NEW BOUNCER (Graceful Exception) ---
                     if len(meta_df) < 7:
-                        # This throws an error to the 'except' block below, keeping the app alive!
                         raise ValueError("The uploaded file does not match the Official UTM Timetable format. Missing the 7-row header.")
                         
                     uni_name = str(meta_df.iloc[0, 0]).strip()
@@ -582,7 +581,7 @@ else:
                                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                     ''', (code, cohort, students, raw_resource, ft_pt, f2f, online, day, time, venue))
                                 
-                                # 3. --- SMART AUTO-ALLOCATION & CATEGORY INFERENCE ---
+                                # 3. --- SMART AUTO-ALLOCATION & ROLE INFERENCE ---
                                 if raw_resource != 'nan' and raw_resource != '':
                                     # Properly extract Title and Staff Name
                                     title = ""
@@ -600,51 +599,42 @@ else:
                                     user_match = cursor.fetchone()
                                     
                                     # --- AUTO-CREATE MISSING USERS WITH INTELLIGENT MAPPING ---
-                                    if not user_match:
-                                        # Generate a default username (e.g., "gopee.ajit")
-                                        default_username = staff_name.lower().replace(" ", ".")
-                                        default_password = "password123" # They can change this later
-                                        
-                                        # --- THE FIX: UPSERT LOGIC (INSERT OR UPDATE) ---
-                                    # First, calculate what they SHOULD be based on the Excel file
+                                    # First, calculate what Role they SHOULD have based on the Excel file
                                     inferred_role = "Lecturer"
-                                    inferred_category = "Category 5 (Other Academic)"
                                     raw_upper = raw_resource.upper()
                                     
                                     if "ASSOC PROF" in raw_upper or "AP" in raw_upper:
                                         inferred_role = "Associate Professor"
-                                        inferred_category = "Category 4 (PhD Staff)"
                                     elif "PROF" in raw_upper:
                                         inferred_role = "Professor"
-                                        inferred_category = "Category 4 (PhD Staff)"
                                     elif "(DR)" in raw_upper:
                                         inferred_role = "HoD" 
-                                        inferred_category = "Category 1 (Management)" 
 
                                     if not user_match:
                                         # SCENARIO A: User is totally new. CREATE THEM.
                                         default_username = staff_name.lower().replace(" ", ".")
                                         default_password = "password123" 
                                         
+                                        # --- THE FIX: Removed category_level from INSERT ---
                                         cursor.execute('''
-                                            INSERT INTO "Users" (username, password, name, role, category_level, title) 
-                                            VALUES (%s, %s, %s, %s, %s, %s)
-                                        ''', (default_username, default_password, staff_name, inferred_role, inferred_category, title))
+                                            INSERT INTO "Users" (username, password, name, role, title) 
+                                            VALUES (%s, %s, %s, %s, %s)
+                                        ''', (default_username, default_password, staff_name, inferred_role, title))
                                         conn.commit() 
                                         
                                         cursor.execute('SELECT user_id FROM "Users" WHERE name=%s', (staff_name,))
                                         user_match = cursor.fetchone()
-                                        st.toast(f"Created new user: {staff_name}") 
+                                        st.toast(f"Created new user: {staff_name} as {inferred_role}") 
                                         
                                     else:
                                         # SCENARIO B: User already exists! UPDATE THEM.
-                                        # This fixes anyone who currently has "N/A" or gets promoted in a future semester!
                                         s_id = user_match[0]
+                                        # --- THE FIX: Removed category_level from UPDATE ---
                                         cursor.execute('''
                                             UPDATE "Users" 
-                                            SET role=%s, category_level=%s, title=%s 
+                                            SET role=%s, title=%s 
                                             WHERE user_id=%s
-                                        ''', (inferred_role, inferred_category, title, s_id))
+                                        ''', (inferred_role, title, s_id))
                                         conn.commit()
 
                                     # Finally, log the allocation mapping
