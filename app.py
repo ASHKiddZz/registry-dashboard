@@ -210,10 +210,11 @@ else:
             
             conn = cloud_engine.raw_connection()
             
-            # --- THE FIX: Eradicated 'category_level', added 'title' for better visibility ---
+            # --- THE FIX 1: Added 'research_status' to the main display table ---
             users_df = pd.read_sql_query('''
-                SELECT user_id as "ID", name as "Full Name", username as "Username", role as "Role", title as "Title" 
+                SELECT user_id as "ID", name as "Full Name", username as "Username", role as "Role", title as "Title", research_status as "Research Status" 
                 FROM "Users"
+                ORDER BY "ID" ASC
             ''', conn)
             st.dataframe(users_df, use_container_width=True, hide_index=True)
             
@@ -251,10 +252,16 @@ else:
                 edit_role = st.selectbox("Update Role", roles, index=role_index)
                 
             with col2:
-                # --- THE FIX: Category Dropdown Completely Removed from UI ---
                 raw_title = current_data.get('Title')
                 safe_title = "" if pd.isna(raw_title) else str(raw_title)
                 edit_title = st.text_input("Update Title (e.g., Dr, Mr, Prof)", value=safe_title)
+                
+                # --- THE FIX 2: Added the Research Status Dropdown to the Edit Form ---
+                research_options = ["Satisfactory", "Unsatisfactory", "N/A"]
+                raw_research = current_data.get('Research Status')
+                safe_research = str(raw_research) if pd.notna(raw_research) else "Unsatisfactory"
+                res_index = research_options.index(safe_research) if safe_research in research_options else 1
+                edit_research = st.selectbox("Update Research Status", research_options, index=res_index)
                 
                 # This is a feature that allows a password reset incase they forget their password.
                 edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
@@ -264,13 +271,17 @@ else:
             with btn_col1:
                 if st.button("Update User", use_container_width=True):
                     cursor = conn.cursor()
-                    # --- THE FIX: category_level removed from SQL UPDATE ---
+                    # --- THE FIX 3: Added research_status to the SQL UPDATE queries ---
                     if edit_password: 
-                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, title=%s, password=%s WHERE user_id=%s', 
-                                       (edit_name, edit_username, edit_role, edit_title, edit_password, selected_id))
+                        cursor.execute('''UPDATE "Users" 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, password=%s 
+                                          WHERE user_id=%s''', 
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_password, selected_id))
                     else: 
-                        cursor.execute('UPDATE "Users" SET name=%s, username=%s, role=%s, title=%s WHERE user_id=%s', 
-                                       (edit_name, edit_username, edit_role, edit_title, selected_id))
+                        cursor.execute('''UPDATE "Users" 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s 
+                                          WHERE user_id=%s''', 
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, selected_id))
                     conn.commit()
                     st.success(f"User updated successfully!")
                     st.rerun()
@@ -295,9 +306,10 @@ else:
                 new_name = st.text_input("Full Name")
                 new_username = st.text_input("Username (Login ID)")
                 new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
-                
-                # --- THE FIX: Category Dropdown Removed ---
                 new_title = st.text_input("Title (Optional - e.g., Dr, Mr, Prof)")
+                
+                # --- THE FIX 4: Added Research Status to Registration Form ---
+                new_research = st.selectbox("Research Performance", ["Satisfactory", "Unsatisfactory", "N/A"], index=1)
 
                 # This section is to manually insert the hire year of a specific user.
                 current_yr = datetime.datetime.now().year
@@ -310,9 +322,11 @@ else:
                 if submit_user:
                     if new_name and new_username and new_pass:
                         cursor = conn.cursor()
-                        # --- THE FIX: category_level removed from SQL INSERT ---
-                        cursor.execute('INSERT INTO "Users" (name, username, role, title, password, hire_year) VALUES (%s, %s, %s, %s, %s, %s)', 
-                                       (new_name, new_username, new_role, new_title, new_pass, new_hire_year))
+                        # --- THE FIX 5: Added research_status to SQL INSERT ---
+                        cursor.execute('''INSERT INTO "Users" 
+                                          (name, username, role, title, research_status, password, hire_year) 
+                                          VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
+                                       (new_name, new_username, new_role, new_title, new_research, new_pass, new_hire_year))
                         conn.commit()
                         st.success(f"Account created for {new_name}!")
                         st.rerun()
@@ -342,14 +356,14 @@ else:
                         for index, row in import_df.iterrows():
                             staff_name = str(row.get('Name', '')).strip()
                             staff_role = str(row.get('Role', '')).strip()
-                            # --- THE FIX: category_level extraction removed ---
 
                             if staff_name and staff_name != 'nan':
                                 cursor.execute('SELECT * FROM "Users" WHERE name=%s', (staff_name,))
                                 if not cursor.fetchone():
-                                    # --- THE FIX: category_level removed from SQL INSERT ---
-                                    cursor.execute('INSERT INTO "Users" (name, role, password) VALUES (%s, %s, %s)',
-                                                   (staff_name, staff_role, 'welcome123'))
+                                    # --- THE FIX 6: Force Bulk Import to default to 'Unsatisfactory' safely ---
+                                    cursor.execute('''INSERT INTO "Users" (name, role, research_status, password) 
+                                                      VALUES (%s, %s, %s, %s)''',
+                                                   (staff_name, staff_role, 'Unsatisfactory', 'welcome123'))
                                     added_count += 1
                                 else:
                                     skipped_count += 1 
@@ -781,42 +795,82 @@ else:
             
             # This is the smart workload calculator
             st.markdown(f"### Lecturer Workload Analysis ({selected_semester})")
-            st.info("💡 Lecturers exceeding their Role limit are highlighted automatically.")
+            st.info("💡 Workload limits are accurately calculated based on Role and Research Performance (Annex Guidelines).")
             
-            # --- THE FIX: SELECTING 'ROLE' AND DROPPING 'CATEGORY' ---
+            # --- THE FIX 1: Fetching 'research_status' alongside the module count ---
             workload_query = '''
-                SELECT u.name as "Lecturer", u.role as "Role", COUNT(a.module_code) as "Assigned Modules"
+                SELECT u.name as "Lecturer", u.role as "Role", u.research_status as "Research_Status", COUNT(a.module_code) as "Assigned Modules"
                 FROM "Users" u
                 LEFT JOIN "Allocations" a ON u.user_id = a.user_id AND a.semester = %s
                 WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
-                GROUP BY u.user_id, u.name, u.role
+                GROUP BY u.user_id, u.name, u.role, u.research_status
             '''
-            workload_df = pd.read_sql_query(workload_query, conn, params=(selected_semester,))
             
-            # --- THE FIX: LIMITS BASED STRICTLY ON ROLES ---
-            def get_role_limit(role):
-                if pd.isna(role): return 99 
-                if role in ["HoD", "HoS"]: return 2
-                if role in ["Associate Professor", "Professor"]: return 5
-                if role in ["Lecturer", "Senior Lecturer"]: return 6
-                return 99 
+            try:
+                workload_df = pd.read_sql_query(workload_query, conn, params=(selected_semester,))
                 
-            workload_df['Limit'] = workload_df['Role'].apply(get_role_limit)
-            workload_df['Excess'] = workload_df['Assigned Modules'] - workload_df['Limit']
-            workload_df['Excess'] = workload_df['Excess'].apply(lambda x: x if x > 0 else 0)
-            workload_df['Status'] = workload_df['Excess'].apply(lambda x: "🚨 OVERLOAD" if x > 0 else "✅ OK")
-            
-            def highlight_overload(row):
-                if row['Excess'] > 0:
-                    return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
-                return [''] * len(row)
-
-            styled_df = workload_df.style.apply(highlight_overload, axis=1)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                # --- THE FIX 2: Advanced Annex-Based Limit Calculator ---
+                def calculate_limits(row):
+                    role = row['Role']
+                    # Safely handle missing research status just in case
+                    research = str(row['Research_Status']).strip() if pd.notna(row['Research_Status']) else "Unsatisfactory"
+                    
+                    normal, excess_sat, excess_unsat = 0, 0, 0
+                    
+                    if role == "HoS":
+                        normal, excess_sat, excess_unsat = 2, 4, 2
+                    elif role == "HoD":
+                        normal, excess_sat, excess_unsat = 4, 4, 2
+                    elif role in ["Professor", "Associate Professor"]: 
+                        normal, excess_sat, excess_unsat = 5, 4, 2
+                    elif role == "Senior Lecturer":                    
+                        normal, excess_sat, excess_unsat = 5, 2, 1
+                    elif role == "Lecturer":                           
+                        normal, excess_sat, excess_unsat = 6, 6, 3
+                
+                    # Calculate their specific max limit based on their research status
+                    allowed_excess = excess_sat if research == "Satisfactory" else excess_unsat
+                    max_allowed = normal + allowed_excess
+                    
+                    return pd.Series([normal, allowed_excess, max_allowed])
+                
+                # Apply the math to the dataframe
+                workload_df[['Normal Quantum', 'Allowed Excess', 'Absolute Max']] = workload_df.apply(calculate_limits, axis=1)
+                
+                # --- THE FIX 3: 3-Tier Status Calculation (Normal, Excess, Overload) ---
+                workload_df['Overload'] = workload_df['Assigned Modules'] - workload_df['Absolute Max']
+                workload_df['Overload'] = workload_df['Overload'].apply(lambda x: x if x > 0 else 0)
+                
+                def get_status(r):
+                    if r['Overload'] > 0: return "🚨 OVERLOAD"
+                    if r['Assigned Modules'] > r['Normal Quantum']: return "⚠️ EXCESS"
+                    return "✅ NORMAL"
+                    
+                workload_df['Status'] = workload_df.apply(get_status, axis=1)
+                
+                # Highlight Overloaded rows in Red, and Excess rows in Yellow
+                def highlight_status(row):
+                    if row['Overload'] > 0:
+                        return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
+                    elif row['Assigned Modules'] > row['Normal Quantum']:
+                        return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
+                    return [''] * len(row)
+    
+                # Reorder columns for a clean, professional display
+                display_cols = ['Lecturer', 'Role', 'Research_Status', 'Assigned Modules', 'Normal Quantum', 'Allowed Excess', 'Absolute Max', 'Overload', 'Status']
+                final_df = workload_df[display_cols].rename(columns={'Research_Status': 'Research Status'})
+                
+                styled_df = final_df.style.apply(highlight_status, axis=1)
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                
+            except Exception as e:
+                st.error(f"Error loading workload analytics: {e}")
             
             st.divider()
             
+            # ==========================================
             # Detailed master list
+            # ==========================================
             st.markdown(f"### Detailed Master List ({selected_semester})")
             
             all_data = pd.read_sql_query('''
@@ -840,7 +894,9 @@ else:
             
             st.divider()
 
+            # ==========================================
             # Manual Assignment Control
+            # ==========================================
             st.markdown("### Manual Assignment Control")
             
             if 'saved_staff_index' not in st.session_state:
