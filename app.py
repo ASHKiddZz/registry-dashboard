@@ -165,19 +165,19 @@ else:
     def registry_dashboard():
         st.title("🛡️ Registry Officer Dashboard")
         
-        # This section checks if there are any unread remarks, if so it is flagged with a message.
-        conn = sqlite3.connect('registry_database.db')
+        # FIXED: Swapped SQLite for Cloud Database
+        conn = cloud_engine.raw_connection()
         
         try:
+            # Added double quotes to table names for Postgres Case-Sensitivity
             remarks_df = pd.read_sql_query("""
                 SELECT r.remark_id, u.name as "Lecturer Name", r.remark_text as "Remark", r.submit_date as "Date"
-                FROM Lecturer_Remarks r
+                FROM "Lecturer_Remarks" r
                 JOIN "Users" u ON r.user_id = u.user_id
                 WHERE r.status = 'Unread'
             """, conn)
 
             if not remarks_df.empty:
-                # The st.expander creates a sort of drop down box that is bright and noticeable.
                 with st.expander("🔔 FLAG: Unread Staff Remarks (Action Required)", expanded=True):
                     st.dataframe(remarks_df, hide_index=True, use_container_width=True)
                 
@@ -186,16 +186,17 @@ else:
                         with col1:
                             ack_id = st.selectbox("Select Remark ID to clear", remarks_df['remark_id'])
                         with col2:
-                            st.write("") # Spacing
+                            st.write("") 
                             st.write("")
                             if st.form_submit_button("Acknowledge & Clear"):
                                 cursor = conn.cursor()
-                                cursor.execute("UPDATE Lecturer_Remarks SET status = 'Read' WHERE remark_id = ?", (ack_id,))
+                                # FIXED: Postgres '%s' syntax
+                                cursor.execute('UPDATE "Lecturer_Remarks" SET status = \'Read\' WHERE remark_id = %s', (ack_id,))
                                 conn.commit()
                                 st.success("Remark cleared from dashboard!")
                                 st.rerun()
+                                
         except Exception as e:
-            # If the database crashes here, we will now see exactly why it did.
             st.error(f"Error loading remarks: {e}")
             
         conn.close()
@@ -1074,12 +1075,12 @@ else:
                                 st.error("You must provide a reason for rejecting the document.")
                             else:
                                 if "Verify" in action:
-                                    # Move the ticket to the HoD's desk!
-                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Pending HoD', rejection_reason = '' WHERE ticket_id = ?", (view_ticket,))
+                                    # FIXED: Swapped ? for %s
+                                    cursor.execute('UPDATE "Pending_Promotions" SET status = \'Pending HoD\', rejection_reason = \'\' WHERE ticket_id = %s', (view_ticket,))
                                     st.success(f"Ticket #{view_ticket} verified and forwarded to the HoD!")
                                 else:
-                                    # Kick it back to the Lecturer
-                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected', rejection_reason = ? WHERE ticket_id = ?", (rejection_reason, view_ticket))
+                                    # FIXED: Swapped ? for %s
+                                    cursor.execute('UPDATE "Pending_Promotions" SET status = \'Rejected\', rejection_reason = %s WHERE ticket_id = %s', (rejection_reason, view_ticket))
                                     st.warning(f"Ticket #{view_ticket} has been rejected and sent back to the applicant.")
                                     
                                 conn.commit()
