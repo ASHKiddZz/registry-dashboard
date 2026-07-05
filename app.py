@@ -1424,50 +1424,53 @@ else:
         # --- TAB 1: ALLOCATIONS OVERVIEW & METRICS ---
         with tab1:
             st.subheader("Department Workload & Metrics")
-            conn = sqlite3.connect('registry_database.db')
+            conn = cloud_engine.raw_connection()
             try:
                 # --- NEW: SYSTEM ALERTS (QUOTAS & PROMOTIONS) ---
-                # We use the exact same SQL logic as the Registry to guarantee matching math
                 alert_query = """
-                    SELECT u.name as "Staff Member", u.category_level as "Category", COUNT(a.module_code) as "Assigned Modules"
-                    FROM Users u
-                    LEFT JOIN Allocations a ON u.user_id = a.user_id
-                    WHERE u.role != 'Registry Officer'
-                    GROUP BY u.user_id
+                    SELECT u.name as "Staff Member", u.role as "Role", u.research_status as "Research_Status", COUNT(a.module_code) as "Assigned Modules"
+                    FROM "Users" u
+                    LEFT JOIN "Allocations" a ON u.user_id = a.user_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
+                    GROUP BY u.user_id, u.name, u.role, u.research_status
                 """
                 alert_df = pd.read_sql_query(alert_query, conn)
                 
-                # Create an empty list to store ONLY the people who exceed limits or hit promotions
+                # Create an empty list to store ONLY the people who exceed limits
                 flagged_data = []
                 
                 for index, row in alert_df.iterrows():
-                    cat = str(row['Category'])
+                    role = row['Role']
+                    research = str(row['Research_Status']).strip() if pd.notna(row['Research_Status']) else "Unsatisfactory"
                     assigned = int(row['Assigned Modules'])
                     
-                    # Define dynamic limits exactly like the Registry constraints
-                    limit = 99
-                    if "Category 1 (Management)" in cat: limit = 2
-                    elif "Category 2 (Professional)" in cat: limit = 1
-                    elif "Category 3 (Technical)" in cat: limit = 2
-                    elif "Category 4 (PhD Staff)" in cat: limit = 5
-                    elif "Category 5 (Other Academic)" in cat: limit = 6
+                    # Define dynamic limits exactly like the Registry constraints (Annex Math)
+                    normal, excess_sat, excess_unsat = 0, 0, 0
+                    if role == "HoS": normal, excess_sat, excess_unsat = 2, 4, 2
+                    elif role == "HoD": normal, excess_sat, excess_unsat = 4, 4, 2
+                    elif role in ["Professor", "Associate Professor"]: normal, excess_sat, excess_unsat = 5, 4, 2
+                    elif role == "Senior Lecturer": normal, excess_sat, excess_unsat = 5, 2, 1
+                    elif role == "Lecturer": normal, excess_sat, excess_unsat = 6, 6, 3
+                
+                    allowed_excess = excess_sat if research == "Satisfactory" else excess_unsat
+                    max_allowed = normal + allowed_excess
                     
                     # If they hit the limits, we add them to the flagged list
-                    if assigned > limit:
+                    if assigned > max_allowed:
                         flagged_data.append({
                             "Staff Member": row['Staff Member'],
-                            "Category": cat,
+                            "Role": role,
                             "Assigned": assigned,
-                            "Limit": limit,
+                            "Max Allowed": max_allowed,
                             "Alert Type": "🚨 OVERLOAD"
                         })
-                    elif assigned == limit and limit != 99:
+                    elif assigned > normal:
                         flagged_data.append({
                             "Staff Member": row['Staff Member'],
-                            "Category": cat,
+                            "Role": role,
                             "Assigned": assigned,
-                            "Limit": limit,
-                            "Alert Type": "✅ PROMOTION ELIGIBLE"
+                            "Normal Quantum": normal,
+                            "Alert Type": "⚠️ EXCESS"
                         })
                 
                 # If the list has people in it, draw the clean Alert Table
@@ -1479,36 +1482,38 @@ else:
                     def highlight_alerts(row):
                         if row['Alert Type'] == '🚨 OVERLOAD':
                             return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
-                        elif row['Alert Type'] == '✅ PROMOTION ELIGIBLE':
-                            return ['background-color: rgba(75, 255, 75, 0.2)'] * len(row)
+                        elif row['Alert Type'] == '⚠️ EXCESS':
+                            return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
                         return [''] * len(row)
                     
                     styled_flag_df = flag_df.style.apply(highlight_alerts, axis=1)
                     st.dataframe(styled_flag_df, use_container_width=True, hide_index=True)
                 else:
-                    st.info("✅ All staff workloads are within normal limits. No pending promotion quotas met.")
+                    st.info("✅ All staff workloads are within normal limits. No pending alerts.")
                 
                 st.divider()
-                # --- END OF SYSTEM ALERTS ---
 
                 # --- 1. GLOBAL SEMESTER FILTER ---
                 selected_semester = st.radio("⏳ Select Semester to Analyze:", ["Semester 1", "Semester 2"], horizontal=True, key="hod_sem")
                 st.divider()
 
                 # --- 2. ENTERPRISE METRICS ---
-                # Calculate high-level stats for the selected semester
-                staff_count = conn.execute("SELECT COUNT(*) FROM Users WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')").fetchone()[0]
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM "Users" WHERE role IN (\'Lecturer\', \'Senior Lecturer\', \'Associate Professor\', \'Professor\')')
+                staff_count = cursor.fetchone()[0]
                 
-                sem_stats = conn.execute("""
-                    SELECT COUNT(a.module_code, SUM(a.students_count), SUM(m.weightage)
-                    FROM Allocations a
-                    JOIN Modules m ON a.module_code = m.module_code
-                    WHERE a.semester = ?
-                """, (selected_semester,)).fetchone()
+                # We swapped a.students_count to a.no_of_students to match the DB schema!
+                cursor.execute("""
+                    SELECT COUNT(a.module_code), SUM(a.no_of_students), SUM(m.weightage)
+                    FROM "Allocations" a
+                    JOIN "Modules" m ON a.module_code = m.module_code
+                    WHERE a.semester = %s
+                """, (selected_semester,))
+                sem_stats = cursor.fetchone()
                 
-                mod_count = sem_stats[0] if sem_stats[0] else 0
-                student_count = sem_stats[1] if sem_stats[1] else 0
-                total_weight = sem_stats[2] if sem_stats[2] else 0
+                mod_count = sem_stats[0] if sem_stats and sem_stats[0] else 0
+                student_count = sem_stats[1] if sem_stats and sem_stats[1] else 0
+                total_weight = sem_stats[2] if sem_stats and sem_stats[2] else 0
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Teaching Staff", staff_count)
@@ -1518,18 +1523,17 @@ else:
                 
                 st.divider()
 
-                # --- 3. YOUR DUAL-FILTER SYSTEM (UPGRADED) ---
+                # --- 3. YOUR DUAL-FILTER SYSTEM (RESTORED & UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
-                # Upgraded SQL: Now pulls the new UTM data but filters by the radio button!
                 alloc_df = pd.read_sql_query("""
-                    SELECT u.name as "Lecturer", u.employment_type as "FT/PT", 
+                    SELECT u.name as "Lecturer", u.title as "Title", 
                            a.module_code as "Module Code", m.module_name as "Module Title", 
-                           a.level_semester as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
-                    FROM Allocations a
-                    JOIN Users u ON a.user_id = u.user_id
-                    JOIN Modules m ON a.module_code = m.module_code
-                    WHERE a.semester = ?
+                           a.level_semester as "Cohort", a.no_of_students as "Students", m.weightage as "Weightage"
+                    FROM "Allocations" a
+                    JOIN "Users" u ON a.user_id = u.user_id
+                    JOIN "Modules" m ON a.module_code = m.module_code
+                    WHERE a.semester = %s
                 """, conn, params=(selected_semester,))
                 
                 col1, col2 = st.columns(2)
@@ -1550,7 +1554,6 @@ else:
                 if selected_module != "All Modules":
                     display_df = display_df[display_df["Module Code"] == selected_module]
                     
-                # Upgraded Dynamic Metrics: Now shows Student totals for the filtered view!
                 met_col1, met_col2, met_col3 = st.columns(3)
                 with met_col1:
                     st.metric(label="Showing Modules", value=len(display_df))
@@ -1568,31 +1571,29 @@ else:
         # --- TAB 2: PROMOTION APPROVALS ---
         with tab2:
             st.subheader("Promotion Requests (Action Required)")
-            conn = sqlite3.connect('registry_database.db')
+            conn = cloud_engine.raw_connection()
             try:
-                # Only pull tickets that are specifically waiting for the HoD
+                # Removed proposed_category to match the Role switch!
                 promo_df = pd.read_sql_query("""
                     SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
-                        p.proposed_role as "Requested Role", p.proposed_category as "Requested Category", p.status
-                    FROM Pending_Promotions p
-                    JOIN Users u ON p.user_id = u.user_id
+                        p.proposed_role as "Requested Role", p.status
+                    FROM "Pending_Promotions" p
+                    JOIN "Users" u ON p.user_id = u.user_id
                     WHERE p.status = 'Pending HoD'
                 """, conn)
                 
                 if promo_df.empty:
                     st.info("✅ No pending promotions require your approval at this time.")
                 else:
-                    # Display the pending requests
                     st.dataframe(promo_df, use_container_width=True, hide_index=True)
-                    
                     st.divider()
 
-                    # --- NEW: REVIEW APPLICATION LETTER SECTION ---
+                    # --- REVIEW APPLICATION LETTER SECTION (RESTORED) ---
                     st.write("### 📄 Review Application Letter")
                     view_ticket = st.selectbox("Select Ticket ID to Download Letter:", promo_df['ticket_id'], key="hod_letter_select")
                     
-                    # Fetch the PDF BLOB from the database
-                    cursor = conn.execute("SELECT u.name, p.registration_letter FROM Pending_Promotions p JOIN Users u ON p.user_id = u.user_id WHERE p.ticket_id = ?", (int(view_ticket),))
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT u.name, p.registration_letter FROM "Pending_Promotions" p JOIN "Users" u ON p.user_id = u.user_id WHERE p.ticket_id = %s', (int(view_ticket),))
                     letter_data = cursor.fetchone()
                     
                     if letter_data and letter_data[1]:
@@ -1607,13 +1608,11 @@ else:
                             type="secondary"
                         )
                     else:
-                        st.warning("⚠️ No registration letter is attached to this ticket. (Legacy Application)")
+                        st.warning("⚠️ No registration letter is attached to this ticket.")
                         
                     st.divider()
-                    # --- END NEW SECTION ---
 
                     st.write("### Process a Request")
-                    
                     with st.form("hod_promo_form"):
                         col1, col2 = st.columns(2)
                         with col1:
@@ -1621,19 +1620,16 @@ else:
                         with col2:
                             action = st.radio("Decision", ["Approve (Forward to HoS)", "Reject"], horizontal=True)
                             
-                        # --- NEW: Mandatory Feedback Box ---
                         rejection_reason = st.text_area("Rejection Reason (Required if Rejecting)")
                         
                         if st.form_submit_button("Submit Decision", use_container_width=True):
-                            # Catch them if they try to reject without giving a reason
                             if "Reject" in action and not rejection_reason.strip():
                                 st.error("You must provide a rejection reason for the applicant.")
                             else:
                                 cursor = conn.cursor()
                                 new_status = 'Pending HoS' if 'Approve' in action else 'Rejected'
                                 
-                                # Save both the status and the reason to the database
-                                cursor.execute("UPDATE Pending_Promotions SET status = ?, rejection_reason = ? WHERE ticket_id = ?", (new_status, rejection_reason, selected_ticket))
+                                cursor.execute('UPDATE "Pending_Promotions" SET status = %s, rejection_reason = %s WHERE ticket_id = %s', (new_status, rejection_reason, selected_ticket))
                                 conn.commit()
                                 st.success(f"Ticket #{selected_ticket} has been marked as: {new_status}")
                                 st.rerun()
@@ -1644,40 +1640,32 @@ else:
         # --- TAB 3: DEPARTMENT ANALYTICS ---
         with tab3:
             st.subheader("📈 Department Workload & Analytics")
-            conn = sqlite3.connect('registry_database.db')
-            
+            conn = cloud_engine.raw_connection()
             try:
-                # --- 1. HIGH-LEVEL METRICS (PRESERVED) ---
                 col1, col2 = st.columns(2)
                 
-                # Count total teaching staff and active tickets waiting for the HoD
-                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM Users WHERE category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')", conn).iloc[0,0]
-                pending_hod = pd.read_sql_query("SELECT COUNT(*) FROM Pending_Promotions WHERE status = 'Pending HoD'", conn).iloc[0,0]
+                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM \"Users\" WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')", conn).iloc[0,0]
+                pending_hod = pd.read_sql_query("SELECT COUNT(*) FROM \"Pending_Promotions\" WHERE status = 'Pending HoD'", conn).iloc[0,0]
                 
                 col1.metric("Total Teaching Staff", total_staff)
                 col2.metric("Pending HoD Reviews", pending_hod)
                 
                 st.divider()
                 
-                # --- 2. DUAL-SEMESTER WORKLOAD DISTRIBUTION CHART (UPGRADED) ---
                 st.write("### 📊 Annual Workload Comparison")
                 st.info("Displays the total module workload for each teaching staff member, split by semester.")
                 
-                # Upgraded Query: Added a.semester to the SELECT and GROUP BY to enable the dual-color split
                 chart_query = """
                     SELECT u.name as "Staff Member", a.semester, COUNT(a.module_code) as "Module Count"
-                    FROM Users u
-                    JOIN Allocations a ON u.user_id = a.user_id
-                    WHERE u.category_level IN ('Category 4 (PhD Staff)', 'Category 5 (Other Academic)')
+                    FROM "Users" u
+                    JOIN "Allocations" a ON u.user_id = a.user_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')
                     GROUP BY u.name, a.semester
                 """
                 chart_df = pd.read_sql_query(chart_query, conn)
                 
                 if not chart_df.empty:
-                    # Pivot the data: Staff names on the left (index), Semester 1 & 2 as side-by-side columns
                     chart_data = chart_df.pivot(index='Staff Member', columns='semester', values='Module Count').fillna(0)
-                    
-                    # Streamlit automatically assigns unique, contrasting colors to the trend lines!
                     st.line_chart(chart_data, use_container_width=True)
                 else:
                     st.info("No workload data available to chart.")
