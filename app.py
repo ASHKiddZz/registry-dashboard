@@ -1502,9 +1502,9 @@ else:
                 cursor.execute('SELECT COUNT(*) FROM "Users" WHERE role IN (\'Lecturer\', \'Senior Lecturer\', \'Associate Professor\', \'Professor\')')
                 staff_count = cursor.fetchone()[0]
                 
-                # We swapped a.students_count to a.no_of_students to match the DB schema!
+                # FIXED: Reverted back to a.students_count to match your database schema
                 cursor.execute("""
-                    SELECT COUNT(a.module_code), SUM(a.no_of_students), SUM(m.weightage)
+                    SELECT COUNT(a.module_code), SUM(a.students_count), SUM(m.weightage)
                     FROM "Allocations" a
                     JOIN "Modules" m ON a.module_code = m.module_code
                     WHERE a.semester = %s
@@ -1526,10 +1526,11 @@ else:
                 # --- 3. YOUR DUAL-FILTER SYSTEM (RESTORED & UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
+                # FIXED: Reverted back to a.students_count
                 alloc_df = pd.read_sql_query("""
                     SELECT u.name as "Lecturer", u.title as "Title", 
                            a.module_code as "Module Code", m.module_name as "Module Title", 
-                           a.level_semester as "Cohort", a.no_of_students as "Students", m.weightage as "Weightage"
+                           a.level_semester as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
                     FROM "Allocations" a
                     JOIN "Users" u ON a.user_id = u.user_id
                     JOIN "Modules" m ON a.module_code = m.module_code
@@ -1573,7 +1574,6 @@ else:
             st.subheader("Promotion Requests (Action Required)")
             conn = cloud_engine.raw_connection()
             try:
-                # Removed proposed_category to match the Role switch!
                 promo_df = pd.read_sql_query("""
                     SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
                         p.proposed_role as "Requested Role", p.status
@@ -1588,7 +1588,7 @@ else:
                     st.dataframe(promo_df, use_container_width=True, hide_index=True)
                     st.divider()
 
-                    # --- REVIEW APPLICATION LETTER SECTION (RESTORED) ---
+                    # --- REVIEW APPLICATION LETTER SECTION ---
                     st.write("### 📄 Review Application Letter")
                     view_ticket = st.selectbox("Select Ticket ID to Download Letter:", promo_df['ticket_id'], key="hod_letter_select")
                     
