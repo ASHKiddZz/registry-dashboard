@@ -1413,7 +1413,7 @@ else:
 
         conn.close()
         
-    # --- TABBED HOD VIEW ---
+   # --- TABBED HOD VIEW ---
     def hod_dashboard():
         st.title("🎓 Head of Department Dashboard")
         st.write("Oversee departmental module allocations and review staff promotion requests.")
@@ -1455,12 +1455,14 @@ else:
                     allowed_excess = excess_sat if research == "Satisfactory" else excess_unsat
                     max_allowed = normal + allowed_excess
                     
-                    # If they hit the limits, we add them to the flagged list
+                    # THE FIX: Added both Normal Quantum AND Max Allowed to both dictionaries
+                    # so Pandas doesn't convert the columns to decimals (floats) to handle missing values!
                     if assigned > max_allowed:
                         flagged_data.append({
                             "Staff Member": row['Staff Member'],
                             "Role": role,
                             "Assigned": assigned,
+                            "Normal Quantum": normal,
                             "Max Allowed": max_allowed,
                             "Alert Type": "🚨 OVERLOAD"
                         })
@@ -1470,6 +1472,7 @@ else:
                             "Role": role,
                             "Assigned": assigned,
                             "Normal Quantum": normal,
+                            "Max Allowed": max_allowed,
                             "Alert Type": "⚠️ EXCESS"
                         })
                 
@@ -1502,7 +1505,6 @@ else:
                 cursor.execute('SELECT COUNT(*) FROM "Users" WHERE role IN (\'Lecturer\', \'Senior Lecturer\', \'Associate Professor\', \'Professor\')')
                 staff_count = cursor.fetchone()[0]
                 
-                # FIXED: Reverted back to a.students_count to match your database schema
                 cursor.execute("""
                     SELECT COUNT(a.module_code), SUM(a.students_count), SUM(m.weightage)
                     FROM "Allocations" a
@@ -1526,7 +1528,6 @@ else:
                 # --- 3. YOUR DUAL-FILTER SYSTEM (RESTORED & UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
-                # FIXED: Reverted back to a.students_count
                 alloc_df = pd.read_sql_query("""
                     SELECT u.name as "Lecturer", u.title as "Title", 
                            a.module_code as "Module Code", m.module_name as "Module Title", 
