@@ -1686,7 +1686,7 @@ else:
         # --- TAB 1: EXECUTIVE OVERVIEW & PROMOTIONS ---
         with tab1:
             st.subheader("School Executive Overview")
-            conn = sqlite3.connect('registry_database.db')
+            conn = cloud_engine.raw_connection()
             try:
                 # ==========================================
                 # SECTION A: THE NEW ENTERPRISE METRICS
@@ -1695,27 +1695,28 @@ else:
                 st.divider()
                 
                 # School-Wide Metrics
-                dept_count = conn.execute("SELECT COUNT(DISTINCT department) FROM Users WHERE department != 'Unassigned'").fetchone()[0]
-                prog_count = conn.execute("SELECT COUNT(DISTINCT programme) FROM Modules WHERE programme != 'General'").fetchone()[0]
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(DISTINCT department) FROM "Users" WHERE department != \'Unassigned\' AND department IS NOT NULL')
+                dept_count = cursor.fetchone()[0] or 0
                 
-                school_stats = conn.execute("""
-                    SELECT COUNT(a.module_code), SUM(a.students_count)
-                    FROM Allocations a
-                    WHERE a.semester = ?
-                """, (selected_semester,)).fetchone()
+                cursor.execute('SELECT COUNT(DISTINCT programme) FROM "Modules" WHERE programme != \'General\' AND programme IS NOT NULL')
+                prog_count = cursor.fetchone()[0] or 0
                 
-                total_classes = school_stats[0] if school_stats[0] else 0
-                total_students = school_stats[1] if school_stats[1] else 0
+                cursor.execute('SELECT COUNT(a.module_code), SUM(a.students_count) FROM "Allocations" a WHERE a.semester = %s', (selected_semester,))
+                school_stats = cursor.fetchone()
+                
+                total_classes = school_stats[0] if school_stats and school_stats[0] else 0
+                total_students = school_stats[1] if school_stats and school_stats[1] else 0
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Active Departments", dept_count)
                 col2.metric("Active Programmes", prog_count)
                 col3.metric("Running Classes", total_classes)
-                col4.metric("Student Enrollments", total_students)
+                col4.metric("Student Enrollments", int(total_students) if total_students else 0)
                 
                 st.divider()
                 
-                # Department Performance Table
+                # RESTORED: Department Performance Table
                 st.write(f"### Department Performance ({selected_semester})")
                 dept_df = pd.read_sql_query("""
                     SELECT 
@@ -1724,9 +1725,9 @@ else:
                         COUNT(a.module_code) as "Modules Taught",
                         SUM(a.students_count) as "Total Students",
                         SUM(m.weightage) as "Total Weightage"
-                    FROM Users u
-                    LEFT JOIN Allocations a ON u.user_id = a.user_id AND a.semester = ?
-                    LEFT JOIN Modules m ON a.module_code = m.module_code
+                    FROM "Users" u
+                    LEFT JOIN "Allocations" a ON u.user_id = a.user_id AND a.semester = %s
+                    LEFT JOIN "Modules" m ON a.module_code = m.module_code
                     WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD')
                     AND u.department != 'Unassigned'
                     GROUP BY u.department
@@ -1743,12 +1744,13 @@ else:
                 # ==========================================
                 st.subheader("Pending Final Approvals")
                 
+                # FIXED: Removed proposed_category to match the new Role-only architecture
                 promo_df = pd.read_sql_query("""
                     SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
-                        p.proposed_role as "Requested Role", p.proposed_category as "Requested Category"
-                FROM Pending_Promotions p
-                JOIN Users u ON p.user_id = u.user_id
-                WHERE p.status = 'Pending HoS'
+                        p.proposed_role as "Requested Role"
+                    FROM "Pending_Promotions" p
+                    JOIN "Users" u ON p.user_id = u.user_id
+                    WHERE p.status = 'Pending HoS'
                 """, conn)
                 
                 if promo_df.empty:
@@ -1758,12 +1760,13 @@ else:
                     
                     st.divider()
 
-                    # --- NEW: REVIEW APPLICATION LETTER SECTION ---
+                    # --- REVIEW APPLICATION LETTER SECTION ---
                     st.write("### 📄 Review Application Letter")
                     view_ticket = st.selectbox("Select Ticket ID to Download Letter:", promo_df['ticket_id'], key="hos_letter_select")
                     
                     # Fetch the PDF BLOB from the database
-                    cursor = conn.execute("SELECT u.name, p.registration_letter FROM Pending_Promotions p JOIN Users u ON p.user_id = u.user_id WHERE p.ticket_id = ?", (int(view_ticket),))
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT u.name, p.registration_letter FROM "Pending_Promotions" p JOIN "Users" u ON p.user_id = u.user_id WHERE p.ticket_id = %s', (int(view_ticket),))
                     letter_data = cursor.fetchone()
                     
                     if letter_data and letter_data[1]:
@@ -1781,7 +1784,6 @@ else:
                         st.warning("⚠️ No registration letter is attached to this ticket. (Legacy Application)")
                         
                     st.divider()
-                    # --- END NEW SECTION ---
 
                     st.write("### Finalize Request")
                     
@@ -1801,17 +1803,19 @@ else:
                                 cursor = conn.cursor()
                                 
                                 if "Approve" in action:
-                                    cursor.execute("SELECT user_id, proposed_role, proposed_category FROM Pending_Promotions WHERE ticket_id = ?", (selected_ticket,))
+                                    # RESTORED: Auto-updating the user's role in the Users table upon approval!
+                                    cursor.execute('SELECT user_id, proposed_role FROM "Pending_Promotions" WHERE ticket_id = %s', (selected_ticket,))
                                     ticket_data = cursor.fetchone()
                                     target_user_id = ticket_data[0]
                                     new_role = ticket_data[1]
-                                    new_category = ticket_data[2]
                                     
-                                    cursor.execute("UPDATE Users SET role = ?, category_level = ? WHERE user_id = ?", (new_role, new_category, target_user_id))
-                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Approved', rejection_reason = '' WHERE ticket_id = ?", (selected_ticket,))
+                                    # Update the actual user profile
+                                    cursor.execute('UPDATE "Users" SET role = %s WHERE user_id = %s', (new_role, target_user_id))
+                                    # Update the ticket status
+                                    cursor.execute('UPDATE "Pending_Promotions" SET status = \'Approved\', rejection_reason = \'\' WHERE ticket_id = %s', (selected_ticket,))
                                     st.success(f"Promotion Approved! The applicant's official role has been updated to {new_role}.")
                                 else:
-                                    cursor.execute("UPDATE Pending_Promotions SET status = 'Rejected', rejection_reason = ? WHERE ticket_id = ?", (rejection_reason, selected_ticket))
+                                    cursor.execute('UPDATE "Pending_Promotions" SET status = \'Rejected\', rejection_reason = %s WHERE ticket_id = %s', (rejection_reason, selected_ticket))
                                     st.warning(f"Ticket #{selected_ticket} has been Rejected.")
                                     
                                 conn.commit()
@@ -1824,16 +1828,16 @@ else:
         # --- TAB 2: SCHOOL OVERVIEW (VISUAL ANALYTICS) ---
         with tab2:
             st.subheader("📊 School Analytics & Demographics")
-            conn = sqlite3.connect('registry_database.db')
+            conn = cloud_engine.raw_connection()
             
             try:
                 # 1. High-Level Metrics (Top Row)
                 col1, col2, col3 = st.columns(3)
                 
                 # Fetching live counts from the database
-                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM Users WHERE role != 'Registry Officer'", conn).iloc[0,0]
-                total_modules = pd.read_sql_query("SELECT COUNT(*) FROM Modules", conn).iloc[0,0]
-                pending_promos = pd.read_sql_query("SELECT COUNT(*) FROM Pending_Promotions WHERE status = 'Pending HoS'", conn).iloc[0,0]
+                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM \"Users\" WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')", conn).iloc[0,0]
+                total_modules = pd.read_sql_query('SELECT COUNT(*) FROM "Modules"', conn).iloc[0,0]
+                pending_promos = pd.read_sql_query("SELECT COUNT(*) FROM \"Pending_Promotions\" WHERE status = 'Pending HoS'", conn).iloc[0,0]
                 
                 col1.metric("Total Academic Staff", total_staff)
                 col2.metric("Total Active Modules", total_modules)
@@ -1847,8 +1851,8 @@ else:
                 # Query to group staff by role
                 role_df = pd.read_sql_query("""
                     SELECT role, COUNT(user_id) as Count 
-                    FROM Users 
-                    WHERE role != 'Registry Officer' 
+                    FROM "Users" 
+                    WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS') 
                     GROUP BY role
                 """, conn)
                 
@@ -1865,10 +1869,10 @@ else:
                 st.write("### Department Workload Breakdown")
                 workload_df = pd.read_sql_query("""
                     SELECT u.name as "Staff Name", u.role as "Role", COUNT(a.module_code) as "Assigned Modules"
-                    FROM Users u
-                    LEFT JOIN Allocations a ON u.user_id = a.user_id
-                    WHERE u.role != 'Registry Officer'
-                    GROUP BY u.user_id
+                    FROM "Users" u
+                    LEFT JOIN "Allocations" a ON u.user_id = a.user_id
+                    WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
+                    GROUP BY u.user_id, u.name, u.role
                     ORDER BY "Assigned Modules" DESC
                 """, conn)
                 
