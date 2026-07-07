@@ -211,9 +211,9 @@ else:
             
             conn = cloud_engine.raw_connection()
             
-            # --- THE FIX 1: Added 'research_status' to the main display table ---
+            # --- THE FIX 1: Added 'department' to the main display table ---
             users_df = pd.read_sql_query('''
-                SELECT user_id as "ID", name as "Full Name", username as "Username", role as "Role", title as "Title", research_status as "Research Status" 
+                SELECT user_id as "ID", name as "Full Name", username as "Username", department as "Department", role as "Role", title as "Title", research_status as "Research Status" 
                 FROM "Users"
                 ORDER BY "ID" ASC
             ''', conn)
@@ -221,6 +221,15 @@ else:
             
             st.divider()
             
+            # --- FETCH AVAILABLE DEPARTMENTS ---
+            # Dynamically grab any existing departments from the database to populate our dropdowns
+            dept_df = pd.read_sql_query('''
+                SELECT DISTINCT department FROM "Modules" WHERE department IS NOT NULL AND department != ''
+                UNION 
+                SELECT DISTINCT department FROM "Users" WHERE department IS NOT NULL AND department != ''
+            ''', conn)
+            available_depts = ["Unassigned"] + sorted([d for d in dept_df['department'].tolist() if d and d != "Unassigned"])
+
             # This section allows the Admin to edit and delete Users within the database.
             st.subheader("Edit or Delete Staff")
             
@@ -252,12 +261,19 @@ else:
                 role_index = roles.index(current_role) if current_role in roles else 0
                 edit_role = st.selectbox("Update Role", roles, index=role_index)
                 
+                # --- THE FIX 2: Added the Department Dropdown to the Edit Form ---
+                current_dept = current_data.get('Department')
+                safe_dept = str(current_dept) if pd.notna(current_dept) else "Unassigned"
+                if safe_dept not in available_depts:
+                    available_depts.append(safe_dept) # Ensure no crash if current dept isn't in standard list
+                dept_index = available_depts.index(safe_dept)
+                edit_dept = st.selectbox("Update Department", available_depts, index=dept_index)
+                
             with col2:
                 raw_title = current_data.get('Title')
                 safe_title = "" if pd.isna(raw_title) else str(raw_title)
                 edit_title = st.text_input("Update Title (e.g., Dr, Mr, Prof)", value=safe_title)
                 
-                # --- THE FIX 2: Added the Research Status Dropdown to the Edit Form ---
                 research_options = ["Satisfactory", "Unsatisfactory", "N/A"]
                 raw_research = current_data.get('Research Status')
                 safe_research = str(raw_research) if pd.notna(raw_research) else "Unsatisfactory"
@@ -272,17 +288,17 @@ else:
             with btn_col1:
                 if st.button("Update User", use_container_width=True):
                     cursor = conn.cursor()
-                    # --- THE FIX 3: Added research_status to the SQL UPDATE queries ---
+                    # --- THE FIX 3: Added department to the SQL UPDATE queries ---
                     if edit_password: 
                         cursor.execute('''UPDATE "Users" 
-                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, password=%s 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s, password=%s 
                                           WHERE user_id=%s''', 
-                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_password, selected_id))
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, edit_password, selected_id))
                     else: 
                         cursor.execute('''UPDATE "Users" 
-                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s 
                                           WHERE user_id=%s''', 
-                                       (edit_name, edit_username, edit_role, edit_title, edit_research, selected_id))
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, selected_id))
                     conn.commit()
                     st.success(f"User updated successfully!")
                     st.rerun()
@@ -304,32 +320,35 @@ else:
             # This section is to be able to manually add a new user providing all necessary informations within each field box.
             st.subheader("Register New Staff Member")
             with st.form("add_user_form", clear_on_submit=True):
-                new_name = st.text_input("Full Name")
-                new_username = st.text_input("Username (Login ID)")
-                new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
-                new_title = st.text_input("Title (Optional - e.g., Dr, Mr, Prof)")
-                
-                # --- THE FIX 4: Added Research Status to Registration Form ---
-                new_research = st.selectbox("Research Performance", ["Satisfactory", "Unsatisfactory", "N/A"], index=1)
-
-                # This section is to manually insert the hire year of a specific user.
-                current_yr = datetime.datetime.now().year
-                new_hire_year = st.number_input("Year Hired", min_value=1990, max_value=current_yr, value=current_yr)
-    
-                new_pass = st.text_input("Temporary Password", type="password")
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_name = st.text_input("Full Name")
+                    new_username = st.text_input("Username (Login ID)")
+                    new_role = st.selectbox("Role", ["Lecturer", "Senior Lecturer", "Associate Professor", "Professor", "HoD", "HoS", "Registry Officer"])
+                    new_title = st.text_input("Title (Optional - e.g., Dr, Mr, Prof)")
+                with col2:
+                    new_research = st.selectbox("Research Performance", ["Satisfactory", "Unsatisfactory", "N/A"], index=1)
+                    
+                    # --- THE FIX 4: Added Department to Registration Form ---
+                    new_dept = st.selectbox("Assign Department", available_depts)
+                    
+                    # This section is to manually insert the hire year of a specific user.
+                    current_yr = datetime.datetime.now().year
+                    new_hire_year = st.number_input("Year Hired", min_value=1990, max_value=current_yr, value=current_yr)
+                    new_pass = st.text_input("Temporary Password", type="password")
 
                 submit_user = st.form_submit_button("Create Account")
 
                 if submit_user:
                     if new_name and new_username and new_pass:
                         cursor = conn.cursor()
-                        # --- THE FIX 5: Added research_status to SQL INSERT ---
+                        # --- THE FIX 5: Added department to SQL INSERT ---
                         cursor.execute('''INSERT INTO "Users" 
-                                          (name, username, role, title, research_status, password, hire_year) 
-                                          VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
-                                       (new_name, new_username, new_role, new_title, new_research, new_pass, new_hire_year))
+                                          (name, username, role, title, research_status, department, password, hire_year) 
+                                          VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''', 
+                                       (new_name, new_username, new_role, new_title, new_research, new_dept, new_pass, new_hire_year))
                         conn.commit()
-                        st.success(f"Account created for {new_name}!")
+                        st.success(f"Account created for {new_name} in {new_dept}!")
                         st.rerun()
                     else:
                         st.error("Please fill out the Name, Username, and Password fields.")
@@ -357,14 +376,18 @@ else:
                         for index, row in import_df.iterrows():
                             staff_name = str(row.get('Name', '')).strip()
                             staff_role = str(row.get('Role', '')).strip()
+                            
+                            # --- THE FIX 6: Capture department from spreadsheet if it exists ---
+                            staff_dept = str(row.get('Department', 'Unassigned')).strip()
+                            if staff_dept == 'nan' or not staff_dept:
+                                staff_dept = 'Unassigned'
 
                             if staff_name and staff_name != 'nan':
                                 cursor.execute('SELECT * FROM "Users" WHERE name=%s', (staff_name,))
                                 if not cursor.fetchone():
-                                    # --- THE FIX 6: Force Bulk Import to default to 'Unsatisfactory' safely ---
-                                    cursor.execute('''INSERT INTO "Users" (name, role, research_status, password) 
-                                                      VALUES (%s, %s, %s, %s)''',
-                                                   (staff_name, staff_role, 'Unsatisfactory', 'welcome123'))
+                                    cursor.execute('''INSERT INTO "Users" (name, role, research_status, department, password) 
+                                                      VALUES (%s, %s, %s, %s, %s)''',
+                                                   (staff_name, staff_role, 'Unsatisfactory', staff_dept, 'welcome123'))
                                     added_count += 1
                                 else:
                                     skipped_count += 1 
