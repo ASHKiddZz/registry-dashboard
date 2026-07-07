@@ -1136,26 +1136,37 @@ else:
     def lecturer_dashboard():
         st.title(f"👋 Welcome, {st.session_state.user_name}")
         
-        conn = sqlite3.connect('registry_database.db')
+        # 1. FIXED: Connect to Cloud Database
+        conn = cloud_engine.raw_connection()
         
-        # 1. Fetch Profile & Workload
-        user_info = pd.read_sql_query("SELECT role, category_level, hire_year FROM Users WHERE user_id = ?", 
-                                      conn, params=(st.session_state.user_id,)).iloc[0]
+        # --- NEW: FETCH PROFILE, DEPARTMENT & WORKLOAD ---
+        cursor = conn.cursor()
+        cursor.execute('SELECT role, research_status, department, hire_year FROM "Users" WHERE user_id = %s', (st.session_state.user_id,))
+        user_info = cursor.fetchone()
         
+        role = user_info[0] if user_info and user_info[0] else "Lecturer"
+        research = user_info[1] if user_info and user_info[1] else "Unsatisfactory"
+        dept = user_info[2] if user_info and user_info[2] else "Unassigned"
+        hire_year = user_info[3] if user_info and user_info[3] else datetime.datetime.now().year
+        
+        # THE FIX: Displaying the Department & Research Status clearly in the profile banner!
+        st.markdown(f"**Role:** {role} &nbsp;|&nbsp; **Department:** {dept} &nbsp;|&nbsp; **Research Status:** {research}")
+        
+        # FIXED: Postgres SQL syntax
         my_modules = pd.read_sql_query("""
             SELECT m.module_code as "Code", m.module_name as "Module Title", m.programme as "Programme", m.programme_coordinator as "Coordinator", m.weightage as "Weightage", m.lecture_hours as "L", m.tutorial_hours as "T", m.practical_hours as "P"
-            FROM Allocations a
-            JOIN Modules m ON a.module_code = m.module_code
-            WHERE a.user_id = ?
+            FROM "Allocations" a
+            JOIN "Modules" m ON a.module_code = m.module_code
+            WHERE a.user_id = %s
         """, conn, params=(st.session_state.user_id,))
         
-        current_yr = datetime.datetime.now().year # Made this dynamic using your global datetime!
-        years_served = current_yr - user_info['hire_year']
+        current_yr = datetime.datetime.now().year
+        years_served = current_yr - hire_year
         workload_count = len(my_modules)
 
         # --- TOP ROW: Quick Stats ---
         col1, col2, col3 = st.columns(3)
-        col1.metric("Current Role", user_info['role'])
+        col1.metric("Current Role", role)
         col2.metric("Teaching Load", f"{workload_count} Modules")
         col3.metric("Service Time", f"{years_served} Years")
 
@@ -1164,12 +1175,10 @@ else:
         # --- SECTION: UPGRADED PROMOTION MANAGEMENT ---
         st.subheader("🚀 Promotion Management")
         
-        cursor = conn.cursor()
-        
         # 1. Check for ACTIVE tickets to see if we should hide the form
         cursor.execute("""
-            SELECT COUNT(*) FROM Pending_Promotions 
-            WHERE user_id = ? AND status NOT IN ('Approved', 'Rejected')
+            SELECT COUNT(*) FROM "Pending_Promotions" 
+            WHERE user_id = %s AND status NOT IN ('Approved', 'Rejected')
         """, (st.session_state.user_id,))
         active_tickets = cursor.fetchone()[0]
         
@@ -1183,7 +1192,6 @@ else:
                     req_role = st.selectbox("Requested Title", ["Senior Lecturer", "Associate Professor", "Professor"])
                     req_category = st.selectbox("Requested Category", ["Category 1 (Management)", "Category 2 (Professional)", "Category 3 (Technical)", "Category 4 (PhD Staff)", "Category 5 (Other Academic)"])
                     
-                    # --- NEW: THE PDF UPLOADER ---
                     st.info("📄 Please attach your official Registration Letter to proceed.")
                     reg_letter = st.file_uploader("Upload Registration Letter (PDF only)", type=["pdf"])
                     
@@ -1195,14 +1203,14 @@ else:
                             # Convert the PDF into raw binary data so it can live in the database
                             letter_bytes = reg_letter.read()
                             
-                            cursor.execute("SELECT MAX(ticket_id) FROM Pending_Promotions")
+                            cursor.execute('SELECT MAX(ticket_id) FROM "Pending_Promotions"')
                             max_id_result = cursor.fetchone()[0]
                             new_ticket_id = 1 if max_id_result is None else int(max_id_result) + 1
                             
-                            # Save the application AND the PDF file at the same time
+                            # FIXED: Postgres SQL syntax
                             cursor.execute("""
-                                INSERT INTO Pending_Promotions (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason, registration_letter)
-                                VALUES (?, ?, ?, ?, 'Pending Registry', '', ?)
+                                INSERT INTO "Pending_Promotions" (ticket_id, user_id, proposed_role, proposed_category, status, rejection_reason, registration_letter)
+                                VALUES (%s, %s, %s, %s, 'Pending Registry', '', %s)
                             """, (new_ticket_id, st.session_state.user_id, req_role, req_category, letter_bytes))
                             
                             conn.commit()
@@ -1220,8 +1228,8 @@ else:
         st.write("### Application Status")
         cursor.execute("""
             SELECT ticket_id, proposed_role, proposed_category, status, rejection_reason 
-            FROM Pending_Promotions 
-            WHERE user_id = ?
+            FROM "Pending_Promotions" 
+            WHERE user_id = %s
             ORDER BY ticket_id DESC
         """, (st.session_state.user_id,))
         
@@ -1276,18 +1284,17 @@ else:
             
             if st.form_submit_button("Send to Registry"):
                 if remark.strip(): 
-                    today_date = datetime.date.today().strftime("%Y-%m-%d") # Removed the local import!
+                    today_date = datetime.date.today().strftime("%Y-%m-%d") 
                     
                     cursor = conn.cursor()
-                    
-                    cursor.execute("SELECT MAX(remark_id) FROM Lecturer_Remarks")
+                    cursor.execute('SELECT MAX(remark_id) FROM "Lecturer_Remarks"')
                     max_id_result = cursor.fetchone()[0]
-                    
                     new_remark_id = 1 if max_id_result is None else int(max_id_result) + 1
                     
+                    # FIXED: Postgres SQL syntax
                     cursor.execute("""
-                        INSERT INTO Lecturer_Remarks (remark_id, user_id, remark_text, status, submit_date) 
-                        VALUES (?, ?, ?, 'Unread', ?)
+                        INSERT INTO "Lecturer_Remarks" (remark_id, user_id, remark_text, status, submit_date) 
+                        VALUES (%s, %s, %s, 'Unread', %s)
                     """, (new_remark_id, st.session_state.user_id, remark, today_date))
                     
                     conn.commit()
@@ -1299,8 +1306,6 @@ else:
 
         # --- SECTION: ENTERPRISE WORKLOAD & HISTORICAL LOG ---
         st.subheader("📚 My Teaching Workload")
-        
-        cursor = conn.cursor()
         
         # UPGRADED SQL: Now fetches Programme, Coordinator, Lecture Hours, and FT/PT!
         my_modules_query = """
@@ -1314,10 +1319,10 @@ else:
                    a.students_count as "Students", 
                    m.weightage as "Weightage",
                    m.programme_coordinator as "Coordinator"
-            FROM Allocations a
-            JOIN Modules m ON a.module_code = m.module_code
-            JOIN Users u ON a.user_id = u.user_id
-            WHERE a.user_id = ?
+            FROM "Allocations" a
+            JOIN "Modules" m ON a.module_code = m.module_code
+            JOIN "Users" u ON a.user_id = u.user_id
+            WHERE a.user_id = %s
             ORDER BY a.semester DESC
         """
         my_modules_df = pd.read_sql_query(my_modules_query, conn, params=(st.session_state.user_id,))
@@ -1356,12 +1361,12 @@ else:
                     st.info("This is a permanent record of your past teaching allocations.")
                     st.dataframe(past_df.drop(columns=['Semester']), use_container_width=True, hide_index=True)
             
-            # --- NEW: WORKLOAD PDF EXPORT ---
+            # --- PDF & EXCEL EXPORTS ---
             st.write("### 🖨️ Export Official Workload Report")
             st.info("Download a formatted PDF summary of your entire workload across all semesters for board meetings and records.")
             
             # Fetch User Details for the PDF Header
-            user_data = cursor.execute("SELECT name, role FROM Users WHERE user_id = ?", (st.session_state.user_id,)).fetchone()
+            user_data = cursor.execute('SELECT name, role FROM "Users" WHERE user_id = %s', (st.session_state.user_id,)).fetchone()
             lec_name = user_data[0]
             lec_role = user_data[1]
             
