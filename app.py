@@ -548,6 +548,10 @@ else:
                                 
                                 if code == 'nan' or code == '' or pd.isna(row.get(col_code)): continue
                                 
+                                # --- NEW FIX: Extract Department ---
+                                raw_dept = str(row.get('Dept', 'Unassigned')).strip()
+                                dept = raw_dept if raw_dept != 'nan' and raw_dept != '' else 'Unassigned'
+
                                 # 1. --- MODULE DATA ---
                                 prog = str(row.get(col_prog, 'General')).strip()
                                 coord = str(row.get(col_coord, 'Unassigned')).strip()
@@ -564,13 +568,13 @@ else:
                                 cursor.execute('SELECT * FROM "Modules" WHERE module_code=%s', (code,))
                                 if cursor.fetchone():
                                     cursor.execute('''UPDATE "Modules" SET 
-                                        module_name=%s, duration=%s, lecture_hours=%s, programme=%s, programme_coordinator=%s, weightage=%s WHERE module_code=%s''', 
-                                        (name, duration, hours, prog, coord, weight, code))
+                                        module_name=%s, duration=%s, lecture_hours=%s, department=%s, programme=%s, programme_coordinator=%s, weightage=%s WHERE module_code=%s''', 
+                                        (name, duration, hours, dept, prog, coord, weight, code))
                                 else:
                                     cursor.execute('''INSERT INTO "Modules" 
-                                        (module_code, module_name, duration, lecture_hours, programme, programme_coordinator, weightage) 
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
-                                        (code, name, duration, hours, prog, coord, weight))
+                                        (module_code, module_name, duration, lecture_hours, department, programme, programme_coordinator, weightage) 
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''', 
+                                        (code, name, duration, hours, dept, prog, coord, weight))
                                         
                                 # 2. --- SCHEDULE DATA ---
                                 cohort = str(row.get('Cohort', '')).strip()
@@ -630,26 +634,38 @@ else:
                                         default_username = staff_name.lower().replace(" ", ".")
                                         default_password = "password123" 
                                         
-                                        # --- THE FIX: Removed category_level from INSERT ---
+                                        # --- THE FIX: Removed category_level, ADDED department ---
                                         cursor.execute('''
-                                            INSERT INTO "Users" (username, password, name, role, title) 
-                                            VALUES (%s, %s, %s, %s, %s)
-                                        ''', (default_username, default_password, staff_name, inferred_role, title))
+                                            INSERT INTO "Users" (username, password, name, role, title, department) 
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                        ''', (default_username, default_password, staff_name, inferred_role, title, dept))
                                         conn.commit() 
                                         
                                         cursor.execute('SELECT user_id FROM "Users" WHERE name=%s', (staff_name,))
                                         user_match = cursor.fetchone()
-                                        st.toast(f"Created new user: {staff_name} as {inferred_role}") 
+                                        st.toast(f"Created new user: {staff_name} as {inferred_role} in {dept}") 
                                         
                                     else:
                                         # SCENARIO B: User already exists! UPDATE THEM.
                                         s_id = user_match[0]
-                                        # --- THE FIX: Removed category_level from UPDATE ---
-                                        cursor.execute('''
-                                            UPDATE "Users" 
-                                            SET role=%s, title=%s 
-                                            WHERE user_id=%s
-                                        ''', (inferred_role, title, s_id))
+                                        
+                                        # Check if they already have a department assigned manually
+                                        cursor.execute('SELECT department FROM "Users" WHERE user_id=%s', (s_id,))
+                                        curr_dept_row = cursor.fetchone()
+                                        curr_dept = curr_dept_row[0] if curr_dept_row else None
+                                        
+                                        if not curr_dept or curr_dept == 'Unassigned':
+                                            cursor.execute('''
+                                                UPDATE "Users" 
+                                                SET role=%s, title=%s, department=%s
+                                                WHERE user_id=%s
+                                            ''', (inferred_role, title, dept, s_id))
+                                        else:
+                                            cursor.execute('''
+                                                UPDATE "Users" 
+                                                SET role=%s, title=%s 
+                                                WHERE user_id=%s
+                                            ''', (inferred_role, title, s_id))
                                         conn.commit()
 
                                     # Finally, log the allocation mapping
