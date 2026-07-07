@@ -1307,11 +1307,12 @@ else:
         # --- SECTION: ENTERPRISE WORKLOAD & HISTORICAL LOG ---
         st.subheader("📚 My Teaching Workload")
         
-        # UPGRADED SQL: Now fetches Programme, Coordinator, Lecture Hours, and FT/PT!
+        # --- THE FIX: Injected 'm.department' into the SQL Query! ---
         my_modules_query = """
             SELECT a.semester as "Semester", 
                    a.module_code as "Module Code", 
                    m.module_name as "Module Title", 
+                   m.department as "Department",
                    m.programme as "Programme",
                    a.level_semester as "Cohort", 
                    u.employment_type as "FT/PT",
@@ -1398,25 +1399,32 @@ else:
                 pdf.cell(0, 10, f"Total Assigned Modules: {total_modules}  |  Total Students: {total_students}", ln=True)
                 pdf.ln(5)
                 
-                # Table Header
+                # --- THE FIX: Squeezed 'Dept' into the PDF Table ---
                 pdf.set_font("Arial", "B", 10)
-                pdf.set_fill_color(200, 200, 200) # Light Gray background for the header
-                pdf.cell(25, 10, "Semester", border=1, fill=True)
-                pdf.cell(25, 10, "Code", border=1, fill=True)
-                pdf.cell(80, 10, "Module Title", border=1, fill=True)
+                pdf.set_fill_color(200, 200, 200) 
+                pdf.cell(20, 10, "Sem", border=1, fill=True)
+                pdf.cell(20, 10, "Code", border=1, fill=True)
+                pdf.cell(20, 10, "Dept", border=1, fill=True)
+                pdf.cell(70, 10, "Module Title", border=1, fill=True)
                 pdf.cell(30, 10, "Cohort", border=1, fill=True)
                 pdf.cell(30, 10, "Students", border=1, fill=True, ln=True)
                 
                 # Table Body
                 pdf.set_font("Arial", "", 9)
                 for index, row in df.iterrows():
-                    pdf.cell(25, 10, str(row['Semester']), border=1)
-                    pdf.cell(25, 10, str(row['Module Code']), border=1)
+                    sem_str = str(row['Semester']).replace('Semester ', 'S') # Abbreviate to fit width
+                    pdf.cell(20, 10, sem_str, border=1)
+                    pdf.cell(20, 10, str(row['Module Code']), border=1)
                     
-                    # Ensure long module titles don't break the table boundaries
+                    # Prevent long department names from breaking the table
+                    dept_str = str(row.get('Department', 'Unassigned'))
+                    if len(dept_str) > 8: dept_str = dept_str[:6] + ".."
+                    pdf.cell(20, 10, dept_str, border=1)
+                    
+                    # Prevent long module titles from breaking the table
                     title = str(row['Module Title'])
-                    if len(title) > 42: title = title[:39] + "..."
-                    pdf.cell(80, 10, title, border=1)
+                    if len(title) > 35: title = title[:32] + "..."
+                    pdf.cell(70, 10, title, border=1)
                     
                     pdf.cell(30, 10, str(row['Cohort']), border=1)
                     pdf.cell(30, 10, str(row['Students']), border=1, ln=True)
