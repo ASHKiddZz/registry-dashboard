@@ -1365,8 +1365,10 @@ else:
             st.write("### 🖨️ Export Official Workload Report")
             st.info("Download a formatted PDF summary of your entire workload across all semesters for board meetings and records.")
             
-            # Fetch User Details for the PDF Header
-            user_data = cursor.execute('SELECT name, role FROM "Users" WHERE user_id = %s', (st.session_state.user_id,)).fetchone()
+            # THE FIX: Split the execute and fetchone to avoid the AttributeError
+            cursor.execute('SELECT name, role FROM "Users" WHERE user_id = %s', (st.session_state.user_id,))
+            user_data = cursor.fetchone()
+            
             lec_name = user_data[0]
             lec_role = user_data[1]
             
