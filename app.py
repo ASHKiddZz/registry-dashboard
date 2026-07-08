@@ -1308,6 +1308,7 @@ else:
         st.subheader("📚 My Teaching Workload")
         
         # --- THE FIX: Injected 'm.department' into the SQL Query! ---
+        # --- THE FIX: Injected 'm.department' into the SQL Query! ---
         my_modules_query = """
             SELECT a.semester as "Semester", 
                    a.module_code as "Module Code", 
