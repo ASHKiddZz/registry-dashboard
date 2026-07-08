@@ -1473,23 +1473,42 @@ else:
         st.title("🎓 Head of Department Dashboard")
         st.write("Oversee departmental module allocations and review staff promotion requests.")
         
+        # --- GLOBAL DEPARTMENT FILTER ---
+        conn = cloud_engine.raw_connection()
+        # Fetch available departments dynamically to populate the dropdown
+        dept_df = pd.read_sql_query('SELECT DISTINCT department FROM "Users" WHERE department IS NOT NULL AND department != \'Unassigned\'', conn)
+        hod_dept_list = ["All Departments"] + sorted([d for d in dept_df['department'].tolist() if d])
+        
+        st.markdown("### 🏢 Department Focus")
+        selected_hod_dept = st.selectbox("Select Department to Monitor:", hod_dept_list)
+        st.divider()
+        
+        # Generate the SQL injection string for filtering
+        dept_sql_filter = ""
+        dept_params = []
+        if selected_hod_dept != "All Departments":
+            # We use 'u.department' because almost all queries below join the Users table as 'u'
+            dept_sql_filter = " AND u.department = %s "
+            dept_params.append(selected_hod_dept)
+            
         # Make sure your tab variables match this list!
         tab1, tab2, tab3 = st.tabs(["Overview", "Promotion Approvals", "Department Analytics"])
         
         # --- TAB 1: ALLOCATIONS OVERVIEW & METRICS ---
         with tab1:
-            st.subheader("Department Workload & Metrics")
-            conn = cloud_engine.raw_connection()
+            st.subheader(f"Department Workload & Metrics ({selected_hod_dept})")
             try:
                 # --- NEW: SYSTEM ALERTS (QUOTAS & PROMOTIONS) ---
-                alert_query = """
-                    SELECT u.name as "Staff Member", u.role as "Role", u.research_status as "Research_Status", COUNT(a.module_code) as "Assigned Modules"
+                # Added u.department and injected the dept_sql_filter
+                alert_query = f"""
+                    SELECT u.name as "Staff Member", u.department as "Department", u.role as "Role", u.research_status as "Research_Status", COUNT(a.module_code) as "Assigned Modules"
                     FROM "Users" u
                     LEFT JOIN "Allocations" a ON u.user_id = a.user_id
                     WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor', 'HoD', 'HoS')
-                    GROUP BY u.user_id, u.name, u.role, u.research_status
+                    {dept_sql_filter}
+                    GROUP BY u.user_id, u.name, u.department, u.role, u.research_status
                 """
-                alert_df = pd.read_sql_query(alert_query, conn)
+                alert_df = pd.read_sql_query(alert_query, conn, params=tuple(dept_params))
                 
                 # Create an empty list to store ONLY the people who exceed limits
                 flagged_data = []
@@ -1498,6 +1517,7 @@ else:
                     role = row['Role']
                     research = str(row['Research_Status']).strip() if pd.notna(row['Research_Status']) else "Unsatisfactory"
                     assigned = int(row['Assigned Modules'])
+                    dept_name = row['Department']
                     
                     # Define dynamic limits exactly like the Registry constraints (Annex Math)
                     normal, excess_sat, excess_unsat = 0, 0, 0
@@ -1515,6 +1535,7 @@ else:
                     if assigned > max_allowed:
                         flagged_data.append({
                             "Staff Member": row['Staff Member'],
+                            "Department": dept_name,
                             "Role": role,
                             "Assigned": assigned,
                             "Normal Quantum": normal,
@@ -1524,6 +1545,7 @@ else:
                     elif assigned > normal:
                         flagged_data.append({
                             "Staff Member": row['Staff Member'],
+                            "Department": dept_name,
                             "Role": role,
                             "Assigned": assigned,
                             "Normal Quantum": normal,
@@ -1557,15 +1579,21 @@ else:
 
                 # --- 2. ENTERPRISE METRICS ---
                 cursor = conn.cursor()
-                cursor.execute('SELECT COUNT(*) FROM "Users" WHERE role IN (\'Lecturer\', \'Senior Lecturer\', \'Associate Professor\', \'Professor\')')
+                # Injecting department filter into metrics
+                staff_query = f'SELECT COUNT(*) FROM "Users" u WHERE u.role IN (\'Lecturer\', \'Senior Lecturer\', \'Associate Professor\', \'Professor\') {dept_sql_filter}'
+                cursor.execute(staff_query, tuple(dept_params))
                 staff_count = cursor.fetchone()[0]
                 
-                cursor.execute("""
+                # Requires joining Users to filter by department
+                sem_query = f"""
                     SELECT COUNT(a.module_code), SUM(a.students_count), SUM(m.weightage)
                     FROM "Allocations" a
                     JOIN "Modules" m ON a.module_code = m.module_code
-                    WHERE a.semester = %s
-                """, (selected_semester,))
+                    JOIN "Users" u ON a.user_id = u.user_id
+                    WHERE a.semester = %s {dept_sql_filter}
+                """
+                sem_params = [selected_semester] + dept_params
+                cursor.execute(sem_query, tuple(sem_params))
                 sem_stats = cursor.fetchone()
                 
                 mod_count = sem_stats[0] if sem_stats and sem_stats[0] else 0
@@ -1583,15 +1611,17 @@ else:
                 # --- 3. YOUR DUAL-FILTER SYSTEM (RESTORED & UPGRADED) ---
                 st.write(f"### Detailed Allocations ({selected_semester})")
                 
-                alloc_df = pd.read_sql_query("""
-                    SELECT u.name as "Lecturer", u.title as "Title", 
+                # Added u.department and the dept_sql_filter
+                alloc_query = f"""
+                    SELECT u.name as "Lecturer", u.title as "Title", u.department as "Department",
                            a.module_code as "Module Code", m.module_name as "Module Title", 
                            a.level_semester as "Cohort", a.students_count as "Students", m.weightage as "Weightage"
                     FROM "Allocations" a
                     JOIN "Users" u ON a.user_id = u.user_id
                     JOIN "Modules" m ON a.module_code = m.module_code
-                    WHERE a.semester = %s
-                """, conn, params=(selected_semester,))
+                    WHERE a.semester = %s {dept_sql_filter}
+                """
+                alloc_df = pd.read_sql_query(alloc_query, conn, params=tuple([selected_semester] + dept_params))
                 
                 col1, col2 = st.columns(2)
                 
@@ -1623,20 +1653,20 @@ else:
                 
             except Exception as e:
                 st.error(f"Error loading allocations: {e}")
-            conn.close()
 
         # --- TAB 2: PROMOTION APPROVALS ---
         with tab2:
             st.subheader("Promotion Requests (Action Required)")
-            conn = cloud_engine.raw_connection()
             try:
-                promo_df = pd.read_sql_query("""
-                    SELECT p.ticket_id, u.name as "Applicant", u.role as "Current Role", 
+                # Added u.department and the dept_sql_filter
+                promo_query = f"""
+                    SELECT p.ticket_id, u.name as "Applicant", u.department as "Department", u.role as "Current Role", 
                         p.proposed_role as "Requested Role", p.status
                     FROM "Pending_Promotions" p
                     JOIN "Users" u ON p.user_id = u.user_id
-                    WHERE p.status = 'Pending HoD'
-                """, conn)
+                    WHERE p.status = 'Pending HoD' {dept_sql_filter}
+                """
+                promo_df = pd.read_sql_query(promo_query, conn, params=tuple(dept_params))
                 
                 if promo_df.empty:
                     st.info("✅ No pending promotions require your approval at this time.")
@@ -1691,17 +1721,24 @@ else:
                                 st.rerun()
             except Exception as e:
                 st.error(f"Error loading promotions: {e}")
-            conn.close()
 
         # --- TAB 3: DEPARTMENT ANALYTICS ---
         with tab3:
             st.subheader("📈 Department Workload & Analytics")
-            conn = cloud_engine.raw_connection()
             try:
                 col1, col2 = st.columns(2)
                 
-                total_staff = pd.read_sql_query("SELECT COUNT(*) FROM \"Users\" WHERE role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')", conn).iloc[0,0]
-                pending_hod = pd.read_sql_query("SELECT COUNT(*) FROM \"Pending_Promotions\" WHERE status = 'Pending HoD'", conn).iloc[0,0]
+                # Injected dept_sql_filter
+                total_staff_query = f"SELECT COUNT(*) FROM \"Users\" u WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor') {dept_sql_filter}"
+                total_staff = pd.read_sql_query(total_staff_query, conn, params=tuple(dept_params)).iloc[0,0]
+                
+                # Joined users table to inject dept_sql_filter
+                pending_hod_query = f"""
+                    SELECT COUNT(*) FROM "Pending_Promotions" p 
+                    JOIN "Users" u ON p.user_id = u.user_id 
+                    WHERE p.status = 'Pending HoD' {dept_sql_filter}
+                """
+                pending_hod = pd.read_sql_query(pending_hod_query, conn, params=tuple(dept_params)).iloc[0,0]
                 
                 col1.metric("Total Teaching Staff", total_staff)
                 col2.metric("Pending HoD Reviews", pending_hod)
@@ -1711,14 +1748,16 @@ else:
                 st.write("### 📊 Annual Workload Comparison")
                 st.info("Displays the total module workload for each teaching staff member, split by semester.")
                 
-                chart_query = """
+                # Injected dept_sql_filter
+                chart_query = f"""
                     SELECT u.name as "Staff Member", a.semester, COUNT(a.module_code) as "Module Count"
                     FROM "Users" u
                     JOIN "Allocations" a ON u.user_id = a.user_id
                     WHERE u.role IN ('Lecturer', 'Senior Lecturer', 'Associate Professor', 'Professor')
+                    {dept_sql_filter}
                     GROUP BY u.name, a.semester
                 """
-                chart_df = pd.read_sql_query(chart_query, conn)
+                chart_df = pd.read_sql_query(chart_query, conn, params=tuple(dept_params))
                 
                 if not chart_df.empty:
                     chart_data = chart_df.pivot(index='Staff Member', columns='semester', values='Module Count').fillna(0)
@@ -1729,7 +1768,8 @@ else:
             except Exception as e:
                 st.error(f"Error loading analytics: {e}")
                 
-            conn.close()
+        # Move conn.close() outside the tabs so it executes once at the end
+        conn.close()
 
     # --- TABBED HOS VIEW ---
     def hos_dashboard():
