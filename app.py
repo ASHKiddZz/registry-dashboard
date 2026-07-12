@@ -211,9 +211,9 @@ else:
             
             conn = cloud_engine.raw_connection()
             
-            # --- THE FIX 1: Added 'department' to the main display table ---
+            # --- THE FIX 1: Added 'department' and 'hire_year' to the main display table ---
             users_df = pd.read_sql_query('''
-                SELECT user_id as "ID", name as "Full Name", username as "Username", department as "Department", role as "Role", title as "Title", research_status as "Research Status" 
+                SELECT user_id as "ID", name as "Full Name", username as "Username", department as "Department", role as "Role", title as "Title", research_status as "Research Status", hire_year as "Hire Year" 
                 FROM "Users"
                 ORDER BY "ID" ASC
             ''', conn)
@@ -280,6 +280,12 @@ else:
                 res_index = research_options.index(safe_research) if safe_research in research_options else 1
                 edit_research = st.selectbox("Update Research Status", research_options, index=res_index)
                 
+                # --- THE FIX 3: Added Hire Year to the Edit Form ---
+                raw_hire = current_data.get('Hire Year')
+                current_yr = datetime.datetime.now().year
+                safe_hire = int(raw_hire) if pd.notna(raw_hire) else current_yr
+                edit_hire_year = st.number_input("Update Year Hired", min_value=1990, max_value=current_yr, value=safe_hire)
+                
                 # This is a feature that allows a password reset incase they forget their password.
                 edit_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
                 
@@ -288,17 +294,17 @@ else:
             with btn_col1:
                 if st.button("Update User", use_container_width=True):
                     cursor = conn.cursor()
-                    # --- THE FIX 3: Added department to the SQL UPDATE queries ---
+                    # --- THE FIX 4: Added department and hire_year to the SQL UPDATE queries ---
                     if edit_password: 
                         cursor.execute('''UPDATE "Users" 
-                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s, password=%s 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s, hire_year=%s, password=%s 
                                           WHERE user_id=%s''', 
-                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, edit_password, selected_id))
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, edit_hire_year, edit_password, selected_id))
                     else: 
                         cursor.execute('''UPDATE "Users" 
-                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s 
+                                          SET name=%s, username=%s, role=%s, title=%s, research_status=%s, department=%s, hire_year=%s 
                                           WHERE user_id=%s''', 
-                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, selected_id))
+                                       (edit_name, edit_username, edit_role, edit_title, edit_research, edit_dept, edit_hire_year, selected_id))
                     conn.commit()
                     st.success(f"User updated successfully!")
                     st.rerun()
@@ -329,7 +335,6 @@ else:
                 with col2:
                     new_research = st.selectbox("Research Performance", ["Satisfactory", "Unsatisfactory", "N/A"], index=1)
                     
-                    # --- THE FIX 4: Added Department to Registration Form ---
                     new_dept = st.selectbox("Assign Department", available_depts)
                     
                     # This section is to manually insert the hire year of a specific user.
@@ -342,7 +347,6 @@ else:
                 if submit_user:
                     if new_name and new_username and new_pass:
                         cursor = conn.cursor()
-                        # --- THE FIX 5: Added department to SQL INSERT ---
                         cursor.execute('''INSERT INTO "Users" 
                                           (name, username, role, title, research_status, department, password, hire_year) 
                                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''', 
@@ -377,7 +381,6 @@ else:
                             staff_name = str(row.get('Name', '')).strip()
                             staff_role = str(row.get('Role', '')).strip()
                             
-                            # --- THE FIX 6: Capture department from spreadsheet if it exists ---
                             staff_dept = str(row.get('Department', 'Unassigned')).strip()
                             if staff_dept == 'nan' or not staff_dept:
                                 staff_dept = 'Unassigned'
