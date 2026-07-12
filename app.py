@@ -1181,7 +1181,9 @@ else:
                     if doc_data and doc_data[2]:
                         lec_name = doc_data[0]
                         doc_title = doc_data[1]
-                        pdf_bytes = doc_data[2]
+                        
+                        # THE FIX: Convert the psycopg2 memoryview object back into standard bytes for Streamlit!
+                        pdf_bytes = bytes(doc_data[2])
                         
                         st.download_button(
                             label=f"📥 Download '{doc_title}' ({lec_name})",
