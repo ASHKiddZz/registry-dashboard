@@ -1307,10 +1307,77 @@ else:
                     
         st.divider()
 
+        # --- SECTION: GENERAL DOCUMENT VAULT ---
+        st.subheader("📁 Personal Document Vault")
+        st.write("Securely upload versatile PDF documents (e.g., medical certificates, standard forms) to your profile. No special conditions are required.")
+        
+        with st.form("general_doc_upload_form", clear_on_submit=True):
+            doc_title = st.text_input("Document Title / Description", placeholder="e.g., Medical Certificate - Nov 2026")
+            general_pdf = st.file_uploader("Upload File (PDF only)", type=["pdf"])
+            
+            if st.form_submit_button("Upload to Vault"):
+                if not doc_title.strip():
+                    st.error("⚠️ Please provide a title or description for your document.")
+                elif general_pdf is None:
+                    st.error("⚠️ Please select a PDF file to upload.")
+                else:
+                    try:
+                        doc_bytes = general_pdf.read()
+                        upload_date = datetime.date.today().strftime("%Y-%m-%d")
+                        
+                        cursor = conn.cursor()
+                        # Auto-create the table if it doesn't exist to prevent crashes
+                        cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS "Lecturer_Documents" (
+                                doc_id SERIAL PRIMARY KEY,
+                                user_id INTEGER,
+                                document_title TEXT,
+                                document_file BYTEA,
+                                upload_date DATE
+                            )
+                        ''')
+                        
+                        cursor.execute('''
+                            INSERT INTO "Lecturer_Documents" (user_id, document_title, document_file, upload_date)
+                            VALUES (%s, %s, %s, %s)
+                        ''', (st.session_state.user_id, doc_title, doc_bytes, upload_date))
+                        
+                        conn.commit()
+                        st.success(f"✅ '{doc_title}' successfully uploaded to your vault!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Database Error: {e}")
+        
+        # Display uploaded documents
+        try:
+            cursor.execute('SELECT doc_id, document_title, upload_date, document_file FROM "Lecturer_Documents" WHERE user_id = %s ORDER BY doc_id DESC', (st.session_state.user_id,))
+            saved_docs = cursor.fetchall()
+            
+            if saved_docs:
+                with st.expander("📂 View My Uploaded Documents", expanded=True):
+                    for doc in saved_docs:
+                        d_id, d_title, d_date, d_bytes = doc
+                        col_doc, col_btn = st.columns([3, 1])
+                        with col_doc:
+                            st.markdown(f"**{d_title}** *(Uploaded: {d_date})*")
+                        with col_btn:
+                            st.download_button(
+                                label="📥 Download",
+                                data=d_bytes,
+                                file_name=f"{d_title.replace(' ', '_')}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_gen_doc_{d_id}"
+                            )
+                        st.divider()
+        except Exception:
+            # Silently pass if the table hasn't been created yet (meaning no docs have ever been uploaded)
+            pass
+            
+        st.divider()
+
         # --- SECTION: ENTERPRISE WORKLOAD & HISTORICAL LOG ---
         st.subheader("📚 My Teaching Workload")
         
-        # --- THE FIX: Injected 'm.department' into the SQL Query! ---
         # --- THE FIX: Injected 'm.department' into the SQL Query! ---
         my_modules_query = """
             SELECT a.semester as "Semester", 
