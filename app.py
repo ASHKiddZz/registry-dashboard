@@ -204,7 +204,8 @@ else:
         st.divider()
         
         # Building the tabs within the registry dashboard.
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Manage Users", "Manage Modules", "Semester Timetable", "Allocations Overview", "Promotions & Rotations"])
+        # Building the tabs within the registry dashboard.
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Manage Users", "Manage Modules", "Semester Timetable", "Allocations Overview", "Promotions & Rotations", "Staff Documents"])
         
         with tab1:
             st.subheader("Current System Users")
@@ -1132,6 +1133,69 @@ else:
                 st.error(f"Error loading verification queue: {e}")
                 
             conn.close()
+        
+        # ==========================================
+        # TAB 6: STAFF DOCUMENT VAULT (RECEIVER)
+        # ==========================================
+        with tab6:
+            st.subheader("📁 Staff Document Vault")
+            st.write("Review and download versatile documents (Medical Certificates, Standard Forms, etc.) submitted by lecturers.")
+            
+            conn = cloud_engine.raw_connection()
+            try:
+                # 1. Safety check to ensure the table exists before querying
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS "Lecturer_Documents" (
+                        doc_id SERIAL PRIMARY KEY,
+                        user_id INTEGER,
+                        document_title TEXT,
+                        document_file BYTEA,
+                        upload_date DATE
+                    )
+                ''')
+                conn.commit()
+                
+                # 2. Fetch all uploaded documents and join with Users to get the lecturer's name
+                doc_query = """
+                    SELECT d.doc_id as "Doc ID", u.name as "Lecturer Name", d.document_title as "Document Title", d.upload_date as "Date Uploaded"
+                    FROM "Lecturer_Documents" d
+                    JOIN "Users" u ON d.user_id = u.user_id
+                    ORDER BY d.doc_id DESC
+                """
+                docs_df = pd.read_sql_query(doc_query, conn)
+                
+                if docs_df.empty:
+                    st.info("No staff documents have been received yet.")
+                else:
+                    st.dataframe(docs_df, use_container_width=True, hide_index=True)
+                    st.divider()
+                    
+                    # 3. Download Interface
+                    st.write("### 📥 Download Document")
+                    view_doc_id = st.selectbox("Select Doc ID to Download:", docs_df['Doc ID'])
+                    
+                    cursor.execute('SELECT u.name, d.document_title, d.document_file FROM "Lecturer_Documents" d JOIN "Users" u ON d.user_id = u.user_id WHERE d.doc_id = %s', (int(view_doc_id),))
+                    doc_data = cursor.fetchone()
+                    
+                    if doc_data and doc_data[2]:
+                        lec_name = doc_data[0]
+                        doc_title = doc_data[1]
+                        pdf_bytes = doc_data[2]
+                        
+                        st.download_button(
+                            label=f"📥 Download '{doc_title}' ({lec_name})",
+                            data=pdf_bytes,
+                            file_name=f"{doc_title.replace(' ', '_')}_{lec_name.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            type="primary"
+                        )
+                    else:
+                        st.error("⚠️ The binary file for this document is missing or corrupted.")
+            except Exception as e:
+                st.error(f"Error loading staff documents: {e}")
+            finally:
+                conn.close()
 
         
 
