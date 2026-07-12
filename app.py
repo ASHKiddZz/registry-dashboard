@@ -1282,11 +1282,20 @@ else:
         # --- SECTION: Remarks for Registry ---
         st.subheader("💬 Registry Communications")
         with st.form("registry_remarks_form"):
-            st.write("Submit a remark or flag an issue regarding your workload/modules directly to the Registry.")
-            remark = st.text_area("Enter your remark here:")
+            st.write("Submit a remark or flag an issue regarding your workload/modules directly to the Registry. (Maximum: 400 words)")
+            
+            # max_chars acts as a UI buffer (approx 400-500 words depending on word length)
+            remark = st.text_area("Enter your remark here:", max_chars=2500)
             
             if st.form_submit_button("Send to Registry"):
-                if remark.strip(): 
+                word_count = len(remark.split())
+                
+                if not remark.strip():
+                    st.error("Please type a remark before submitting.")
+                elif word_count > 400:
+                    # Strict word count enforcement
+                    st.error(f"⚠️ Your remark is {word_count} words long. Please shorten it to a maximum of 400 words.")
+                else:
                     today_date = datetime.date.today().strftime("%Y-%m-%d") 
                     
                     cursor = conn.cursor()
@@ -1302,8 +1311,6 @@ else:
                     
                     conn.commit()
                     st.success("Your remark has been successfully flagged for the Registry Office!")
-                else:
-                    st.error("Please type a remark before submitting.")
                     
         st.divider()
 
