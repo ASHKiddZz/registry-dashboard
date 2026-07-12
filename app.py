@@ -1370,7 +1370,8 @@ else:
                             )
                         st.divider()
         except Exception:
-            # Silently pass if the table hasn't been created yet (meaning no docs have ever been uploaded)
+            # THE FIX: PostgreSQL requires a rollback after a failed query before you can run the next one!
+            conn.rollback()
             pass
             
         st.divider()
