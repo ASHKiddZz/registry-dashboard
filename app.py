@@ -124,19 +124,6 @@ else:
         st.session_state.clear()
         st.rerun()
 
-    # A reset button option to cleanly rebuild the database, only available to the Admin(Registry).
-    st.sidebar.divider()
-    if st.sidebar.button("🚨 Reset Database to Default"):
-        import os
-        # 1. Delete the current messy database
-        if os.path.exists('registry_database.db'):
-            os.remove('registry_database.db')
-        
-        # When the user logs out the app will restart.
-        st.session_state.clear()
-        
-        # 3. This reloads the page and triggers the excel seeder at the top of the page.
-        st.rerun()
         
     # This section is a feature that allows the users to update their password whenever they feel like it.
     with st.sidebar.expander("⚙️ Change Password"):
