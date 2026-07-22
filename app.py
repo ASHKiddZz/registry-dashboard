@@ -1092,7 +1092,7 @@ else:
                     
                     if letter_data and letter_data[1]:
                         applicant_name = letter_data[0]
-                        pdf_bytes = letter_data[1]
+                        pdf_bytes = bytes(letter_data[1])
                         
                         st.download_button(
                             label=f"📥 Download Registration Letter ({applicant_name})",
@@ -1828,7 +1828,7 @@ else:
                     
                     if letter_data and letter_data[1]:
                         applicant_name = letter_data[0]
-                        pdf_bytes = letter_data[1]
+                        pdf_bytes = bytes(letter_data[1])
                         
                         st.download_button(
                             label=f"📥 Download Registration Letter ({applicant_name})",
@@ -2010,7 +2010,7 @@ else:
                     
                     if letter_data and letter_data[1]:
                         applicant_name = letter_data[0]
-                        pdf_bytes = letter_data[1]
+                        pdf_bytes = bytes(letter_data[1])
                         
                         st.download_button(
                             label=f"📥 Download Registration Letter ({applicant_name})",
